@@ -6,6 +6,7 @@ import {
   IsBoolean,
   Min,
   IsDateString,
+  IsArray,
 } from 'class-validator';
 
 export class BookDto {
@@ -53,6 +54,9 @@ export class BookDto {
 
   @ApiProperty()
   is_active: boolean;
+
+  @ApiProperty({ required: false, type: [Object] })
+  authors?: Array<{ id: string; first_name: string; last_name: string; is_primary: boolean }>;
 }
 
 export class CreateBookDto {
@@ -108,6 +112,17 @@ export class CreateBookDto {
   @IsOptional()
   @IsString()
   cover_image_url?: string;
+
+  @ApiProperty({ required: false, type: [String], description: 'Array of author IDs' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  author_ids?: string[];
+
+  @ApiProperty({ required: false, description: 'ID of the primary author (must be in author_ids)' })
+  @IsOptional()
+  @IsString()
+  primary_author_id?: string;
 }
 
 export class UpdateBookDto {
@@ -172,6 +187,17 @@ export class UpdateBookDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @ApiProperty({ required: false, type: [String], description: 'Array of author IDs' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  author_ids?: string[];
+
+  @ApiProperty({ required: false, description: 'ID of the primary author (must be in author_ids)' })
+  @IsOptional()
+  @IsString()
+  primary_author_id?: string;
 }
 
 export class BookSearchResultDto {
@@ -207,4 +233,7 @@ export class BookSearchResultDto {
 
   @ApiProperty({ required: false })
   cover_image_url?: string;
+
+  @ApiProperty({ required: false, type: [Object] })
+  authors?: Array<{ id: string; first_name: string; last_name: string; is_primary: boolean }>;
 }

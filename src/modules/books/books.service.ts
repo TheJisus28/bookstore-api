@@ -41,12 +41,34 @@ export class BooksService {
     const total = parseInt(countResult.rows[0].count);
 
     const result = await this.pool.query(
-      `SELECT * FROM books ${whereClause} ORDER BY title LIMIT $1 OFFSET $2`,
+      `SELECT 
+        b.*,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', a.id,
+              'first_name', a.first_name,
+              'last_name', a.last_name,
+              'is_primary', ba.is_primary
+            )
+          ) FILTER (WHERE a.id IS NOT NULL),
+          '[]'::json
+        ) as authors
+      FROM books b
+      LEFT JOIN book_authors ba ON b.id = ba.book_id
+      LEFT JOIN authors a ON ba.author_id = a.id
+      ${whereClause}
+      GROUP BY b.id
+      ORDER BY b.title
+      LIMIT $1 OFFSET $2`,
       [limit, offset],
     );
 
     return {
-      data: result.rows as BookDto[],
+      data: result.rows.map((row: any) => ({
+        ...row,
+        authors: row.authors || [],
+      })) as BookDto[],
       total,
       page,
       limit,
@@ -55,10 +77,37 @@ export class BooksService {
   }
 
   async findOne(id: string): Promise<BookDto | null> {
-    const result = await this.pool.query('SELECT * FROM books WHERE id = $1', [
-      id,
-    ]);
-    return (result.rows[0] as BookDto) || null;
+    const result = await this.pool.query(
+      `SELECT 
+        b.*,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', a.id,
+              'first_name', a.first_name,
+              'last_name', a.last_name,
+              'is_primary', ba.is_primary
+            )
+          ) FILTER (WHERE a.id IS NOT NULL),
+          '[]'::json
+        ) as authors
+      FROM books b
+      LEFT JOIN book_authors ba ON b.id = ba.book_id
+      LEFT JOIN authors a ON ba.author_id = a.id
+      WHERE b.id = $1
+      GROUP BY b.id`,
+      [id],
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      ...row,
+      authors: row.authors || [],
+    } as BookDto;
   }
 
   async create(createBookDto: CreateBookDto): Promise<BookDto> {
@@ -97,7 +146,26 @@ export class BooksService {
       ],
     );
 
-    return result.rows[0] as BookDto;
+    const bookId = result.rows[0].id;
+
+    // Associate authors if provided
+    if (createBookDto.author_ids && createBookDto.author_ids.length > 0) {
+      const primaryAuthorId =
+        createBookDto.primary_author_id || createBookDto.author_ids[0];
+
+      for (const authorId of createBookDto.author_ids) {
+        const isPrimary = authorId === primaryAuthorId;
+        await this.pool.query(
+          `INSERT INTO book_authors (book_id, author_id, is_primary)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (book_id, author_id) DO UPDATE SET is_primary = $3`,
+          [bookId, authorId, isPrimary],
+        );
+      }
+    }
+
+    // Return the book with authors
+    return this.findOne(bookId) as Promise<BookDto>;
   }
 
   async update(id: string, updateBookDto: UpdateBookDto): Promise<BookDto> {
@@ -106,11 +174,14 @@ export class BooksService {
       throw new NotFoundException('Book not found');
     }
 
+    // Extract author_ids and primary_author_id before processing other fields
+    const { author_ids, primary_author_id, ...bookFields } = updateBookDto;
+
     const fields: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
-    Object.entries(updateBookDto).forEach(([key, value]) => {
+    Object.entries(bookFields).forEach(([key, value]) => {
       if (value !== undefined) {
         fields.push(`${key} = $${paramIndex}`);
         values.push(value);
@@ -118,19 +189,41 @@ export class BooksService {
       }
     });
 
-    if (fields.length === 0) {
-      return existing;
+    // Update book fields if there are any
+    if (fields.length > 0) {
+      fields.push(`updated_at = CURRENT_TIMESTAMP`);
+      values.push(id);
+
+      await this.pool.query(
+        `UPDATE books SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+        values,
+      );
     }
 
-    fields.push(`updated_at = CURRENT_TIMESTAMP`);
-    values.push(id);
+    // Update authors if provided
+    if (author_ids !== undefined) {
+      // Delete existing author relationships
+      await this.pool.query('DELETE FROM book_authors WHERE book_id = $1', [
+        id,
+      ]);
 
-    const result = await this.pool.query(
-      `UPDATE books SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      values,
-    );
+      // Add new author relationships
+      if (author_ids.length > 0) {
+        const primaryId = primary_author_id || author_ids[0];
 
-    return result.rows[0] as BookDto;
+        for (const authorId of author_ids) {
+          const isPrimary = authorId === primaryId;
+          await this.pool.query(
+            `INSERT INTO book_authors (book_id, author_id, is_primary)
+             VALUES ($1, $2, $3)`,
+            [id, authorId, isPrimary],
+          );
+        }
+      }
+    }
+
+    // Return the updated book with authors
+    return this.findOne(id) as Promise<BookDto>;
   }
 
   async remove(id: string): Promise<void> {
@@ -276,8 +369,36 @@ export class BooksService {
       ],
     );
 
+    // Get authors for each book
+    const booksWithAuthors = await Promise.all(
+      result.rows.map(async (book: any) => {
+        const authorsResult = await this.pool.query(
+          `SELECT 
+            a.id,
+            a.first_name,
+            a.last_name,
+            ba.is_primary
+          FROM book_authors ba
+          INNER JOIN authors a ON ba.author_id = a.id
+          WHERE ba.book_id = $1
+          ORDER BY ba.is_primary DESC, a.last_name, a.first_name`,
+          [book.book_id],
+        );
+
+        return {
+          ...book,
+          authors: authorsResult.rows.map((row: any) => ({
+            id: row.id,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            is_primary: row.is_primary,
+          })),
+        };
+      }),
+    );
+
     return {
-      data: result.rows as BookSearchResultDto[],
+      data: booksWithAuthors as BookSearchResultDto[],
       total,
       page,
       limit,
