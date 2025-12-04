@@ -26,6 +26,7 @@ import {
 } from './book.dto';
 import { BookAuthorDto, AddAuthorToBookDto, BookWithAuthorsDto } from './book-authors.dto';
 import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
+import { BookSearchFiltersDto } from './book-search.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -120,30 +121,65 @@ export class BooksController {
 
   @Get('search/advanced')
   @ApiOperation({ summary: 'Advanced book search with filters' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'category', required: false })
+  @ApiQuery({ name: 'author', required: false })
+  @ApiQuery({ name: 'publisher', required: false })
   @ApiQuery({ name: 'minPrice', required: false, type: Number })
   @ApiQuery({ name: 'maxPrice', required: false, type: Number })
   @ApiQuery({ name: 'minRating', required: false, type: Number })
+  @ApiQuery({ name: 'language', required: false })
+  @ApiQuery({ name: 'minStock', required: false, type: Number })
+  @ApiQuery({ name: 'maxStock', required: false, type: Number })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['title', 'price', 'date', 'rating'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
   @ApiResponse({
     status: 200,
     description: 'Search results',
     type: PaginatedResponseDto<BookSearchResultDto>,
   })
   advancedSearch(
-    @Query() pagination: PaginationDto,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('search') search?: string,
     @Query('category') category?: string,
-    @Query('minPrice') minPrice?: number,
-    @Query('maxPrice') maxPrice?: number,
-    @Query('minRating') minRating?: number,
+    @Query('author') author?: string,
+    @Query('publisher') publisher?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
+    @Query('minRating') minRating?: string,
+    @Query('language') language?: string,
+    @Query('minStock') minStock?: string,
+    @Query('maxStock') maxStock?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
   ): Promise<PaginatedResponseDto<BookSearchResultDto>> {
+    const pagination: PaginationDto = {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 10,
+    };
+
     return this.booksService.advancedSearch(
       search || null,
       category || null,
-      minPrice || null,
-      maxPrice || null,
-      minRating || null,
+      author || null,
+      publisher || null,
+      minPrice ? parseFloat(minPrice) : null,
+      maxPrice ? parseFloat(maxPrice) : null,
+      minRating ? parseFloat(minRating) : null,
+      language || null,
+      minStock ? parseInt(minStock, 10) : null,
+      maxStock ? parseInt(maxStock, 10) : null,
+      startDate || null,
+      endDate || null,
+      sortBy || null,
+      sortOrder || null,
       pagination,
     );
   }

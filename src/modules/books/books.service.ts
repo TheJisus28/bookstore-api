@@ -173,25 +173,96 @@ export class BooksService {
   async advancedSearch(
     searchTerm: string | null,
     categoryId: string | null,
+    authorId: string | null,
+    publisherId: string | null,
     minPrice: number | null,
     maxPrice: number | null,
     minRating: number | null,
+    language: string | null,
+    minStock: number | null,
+    maxStock: number | null,
+    startDate: string | null,
+    endDate: string | null,
+    sortBy: string | null,
+    sortOrder: string | null,
     pagination: PaginationDto,
   ): Promise<PaginatedResponseDto<BookSearchResultDto>> {
     const { page = 1, limit = 10 } = pagination;
     const offset = (page - 1) * limit;
 
-    const result = await this.pool.query(
-      `SELECT * FROM search_books($1, $2, $3, $4, $5) LIMIT $6 OFFSET $7`,
-      [searchTerm, categoryId, minPrice, maxPrice, minRating, limit, offset],
+    // Get total count first - use a subquery to avoid ORDER BY issues
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*) as count FROM (
+        SELECT DISTINCT b.id
+        FROM books b
+        LEFT JOIN publishers p ON b.publisher_id = p.id
+        LEFT JOIN categories c ON b.category_id = c.id
+        LEFT JOIN book_authors ba ON b.id = ba.book_id
+        LEFT JOIN (
+            SELECT 
+                r.book_id as review_book_id,
+                AVG(r.rating)::NUMERIC(3, 2) as avg_rating,
+                COUNT(*) as review_count
+            FROM reviews r
+            GROUP BY r.book_id
+        ) book_ratings ON b.id = book_ratings.review_book_id
+        WHERE 
+            b.is_active = TRUE
+            AND ($1::TEXT IS NULL OR 
+                 to_tsvector('spanish', coalesce(b.title, '') || ' ' || coalesce(b.description, '')) 
+                 @@ plainto_tsquery('spanish', $1)
+                 OR LOWER(b.title) LIKE '%' || LOWER($1) || '%')
+            AND ($2::UUID IS NULL OR b.category_id = $2)
+            AND ($3::UUID IS NULL OR ba.author_id = $3)
+            AND ($4::UUID IS NULL OR b.publisher_id = $4)
+            AND ($5::NUMERIC IS NULL OR b.price >= $5)
+            AND ($6::NUMERIC IS NULL OR b.price <= $6)
+            AND ($7::NUMERIC IS NULL OR COALESCE(book_ratings.avg_rating, 0) >= $7)
+            AND ($8::TEXT IS NULL OR LOWER(b.language) = LOWER($8))
+            AND ($9::INTEGER IS NULL OR b.stock >= $9)
+            AND ($10::INTEGER IS NULL OR b.stock <= $10)
+            AND ($11::DATE IS NULL OR b.publication_date >= $11)
+            AND ($12::DATE IS NULL OR b.publication_date <= $12)
+      ) as filtered_books`,
+      [
+        searchTerm,
+        categoryId,
+        authorId,
+        publisherId,
+        minPrice,
+        maxPrice,
+        minRating,
+        language,
+        minStock,
+        maxStock,
+        startDate,
+        endDate,
+      ],
     );
+    const total = parseInt(countResult.rows[0].count);
 
-    // Count total (simplified - in production would use a separate count function)
-    const allResults = await this.pool.query(
-      `SELECT * FROM search_books($1, $2, $3, $4, $5)`,
-      [searchTerm, categoryId, minPrice, maxPrice, minRating],
+    // Get paginated results
+    const result = await this.pool.query(
+      `SELECT * FROM search_books_extended($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) LIMIT $15 OFFSET $16`,
+      [
+        searchTerm,
+        categoryId,
+        authorId,
+        publisherId,
+        minPrice,
+        maxPrice,
+        minRating,
+        language,
+        minStock,
+        maxStock,
+        startDate,
+        endDate,
+        sortBy || 'title',
+        sortOrder || 'ASC',
+        limit,
+        offset,
+      ],
     );
-    const total = allResults.rows.length;
 
     return {
       data: result.rows as BookSearchResultDto[],

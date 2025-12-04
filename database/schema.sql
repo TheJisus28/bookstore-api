@@ -339,6 +339,120 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Extended search function with more filters
+CREATE OR REPLACE FUNCTION search_books_extended(
+    search_term TEXT DEFAULT NULL,
+    category_uuid UUID DEFAULT NULL,
+    author_uuid UUID DEFAULT NULL,
+    publisher_uuid UUID DEFAULT NULL,
+    min_price NUMERIC DEFAULT NULL,
+    max_price NUMERIC DEFAULT NULL,
+    min_rating NUMERIC DEFAULT NULL,
+    language_filter TEXT DEFAULT NULL,
+    min_stock INTEGER DEFAULT NULL,
+    max_stock INTEGER DEFAULT NULL,
+    start_date DATE DEFAULT NULL,
+    end_date DATE DEFAULT NULL,
+    sort_by TEXT DEFAULT 'title',
+    sort_order TEXT DEFAULT 'ASC'
+)
+RETURNS TABLE (
+    book_id UUID,
+    title VARCHAR,
+    price NUMERIC,
+    stock INTEGER,
+    average_rating NUMERIC,
+    total_reviews BIGINT,
+    publisher_name VARCHAR,
+    category_name VARCHAR,
+    publication_date DATE,
+    language VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH filtered_books AS (
+        SELECT DISTINCT
+            b.id as filtered_book_id,
+            b.title,
+            b.price,
+            b.stock,
+            COALESCE(book_ratings.avg_rating, 0)::NUMERIC(3, 2) as average_rating,
+            COALESCE(book_ratings.review_count, 0) as total_reviews,
+            p.name as publisher_name,
+            c.name as category_name,
+            b.publication_date,
+            b.language
+        FROM books b
+        LEFT JOIN publishers p ON b.publisher_id = p.id
+        LEFT JOIN categories c ON b.category_id = c.id
+        LEFT JOIN book_authors ba ON b.id = ba.book_id
+        LEFT JOIN (
+            SELECT 
+                r.book_id as review_book_id,
+                AVG(r.rating)::NUMERIC(3, 2) as avg_rating,
+                COUNT(*) as review_count
+            FROM reviews r
+            GROUP BY r.book_id
+        ) book_ratings ON b.id = book_ratings.review_book_id
+        WHERE 
+            b.is_active = TRUE
+            AND (search_term IS NULL OR 
+                 to_tsvector('spanish', coalesce(b.title, '') || ' ' || coalesce(b.description, '')) 
+                 @@ plainto_tsquery('spanish', search_term)
+                 OR LOWER(b.title) LIKE '%' || LOWER(search_term) || '%')
+            AND (category_uuid IS NULL OR b.category_id = category_uuid)
+            AND (author_uuid IS NULL OR ba.author_id = author_uuid)
+            AND (publisher_uuid IS NULL OR b.publisher_id = publisher_uuid)
+            AND (min_price IS NULL OR b.price >= min_price)
+            AND (max_price IS NULL OR b.price <= max_price)
+            AND (min_rating IS NULL OR COALESCE(book_ratings.avg_rating, 0) >= min_rating)
+            AND (language_filter IS NULL OR LOWER(b.language) = LOWER(language_filter))
+            AND (min_stock IS NULL OR b.stock >= min_stock)
+            AND (max_stock IS NULL OR b.stock <= max_stock)
+            AND (start_date IS NULL OR b.publication_date >= start_date)
+            AND (end_date IS NULL OR b.publication_date <= end_date)
+    )
+    SELECT 
+        filtered_book_id as book_id,
+        filtered_books.title,
+        filtered_books.price,
+        filtered_books.stock,
+        filtered_books.average_rating,
+        filtered_books.total_reviews,
+        filtered_books.publisher_name,
+        filtered_books.category_name,
+        filtered_books.publication_date,
+        filtered_books.language
+    FROM filtered_books
+    ORDER BY 
+        CASE 
+            WHEN sort_by = 'price' AND sort_order = 'ASC' THEN filtered_books.price
+        END ASC NULLS LAST,
+        CASE 
+            WHEN sort_by = 'price' AND sort_order = 'DESC' THEN filtered_books.price
+        END DESC NULLS LAST,
+        CASE 
+            WHEN sort_by = 'date' AND sort_order = 'ASC' THEN filtered_books.publication_date
+        END ASC NULLS LAST,
+        CASE 
+            WHEN sort_by = 'date' AND sort_order = 'DESC' THEN filtered_books.publication_date
+        END DESC NULLS LAST,
+        CASE 
+            WHEN sort_by = 'rating' AND sort_order = 'ASC' THEN filtered_books.average_rating
+        END ASC,
+        CASE 
+            WHEN sort_by = 'rating' AND sort_order = 'DESC' THEN filtered_books.average_rating
+        END DESC,
+        CASE 
+            WHEN sort_by = 'title' AND sort_order = 'ASC' THEN filtered_books.title
+        END ASC,
+        CASE 
+            WHEN sort_by = 'title' AND sort_order = 'DESC' THEN filtered_books.title
+        END DESC,
+        filtered_books.title ASC;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Function to validate stock availability
 CREATE OR REPLACE FUNCTION validate_stock(book_uuid UUID, requested_quantity INTEGER)
 RETURNS BOOLEAN AS $$
