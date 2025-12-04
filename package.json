@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:setup": "docker exec -i mi-postgres psql -U admin -d bookstore < database/schema.sql",
-    "db:reset": "docker exec -i mi-postgres psql -U admin -d bookstore < database/reset.sql && pnpm run db:setup"
+    "db:reset": "docker exec -i mi-postgres psql -U admin -d bookstore < database/reset.sql && pnpm run db:setup",
+    "create:admin": "ts-node -r tsconfig-paths/register scripts/create-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

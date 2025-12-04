@@ -16,6 +16,7 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { UsersModule } from './modules/users/users.module';
+import { InitializationModule } from './common/initialization/initialization.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { UsersModule } from './modules/users/users.module';
     }),
     DatabaseModule,
     LoggingModule,
+    InitializationModule,
     AuthModule,
     BooksModule,
     AuthorsModule,
