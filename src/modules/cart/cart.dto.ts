@@ -36,8 +36,8 @@ export class AddToCartDto {
   book_id: string;
 
   @ApiProperty()
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: 'quantity must be an integer' })
+  @Min(1, { message: 'quantity must be at least 1' })
   quantity: number;
 }
 
