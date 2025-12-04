@@ -243,7 +243,19 @@ export class BooksService {
 
     // Get paginated results
     const result = await this.pool.query(
-      `SELECT * FROM search_books_extended($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) LIMIT $15 OFFSET $16`,
+      `SELECT 
+        book_id,
+        title,
+        price,
+        stock,
+        average_rating,
+        total_reviews,
+        publisher_name,
+        category_name,
+        publication_date,
+        language,
+        cover_image_url
+      FROM search_books_extended($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) LIMIT $15 OFFSET $16`,
       [
         searchTerm,
         categoryId,
