@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { CustomLoggerService } from './logger.service';
 import { HttpLoggerInterceptor } from './http-logger.interceptor';
 import { DatabaseLoggerService } from './database-logger.service';
@@ -9,7 +9,7 @@ import { DatabaseModule } from '../config/database/database.module';
  */
 @Global()
 @Module({
-  imports: [DatabaseModule],
+  imports: [forwardRef(() => DatabaseModule)],
   providers: [
     CustomLoggerService,
     HttpLoggerInterceptor,
