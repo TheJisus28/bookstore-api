@@ -24,26 +24,38 @@ export class OrdersService {
   async findAll(
     pagination: PaginationDto,
     userId?: string,
+    status?: string,
   ): Promise<PaginatedResponseDto<OrderDto>> {
     const { page = 1, limit = 10 } = pagination;
     const offset = (page - 1) * limit;
 
-    let whereClause = '';
+    const whereConditions: string[] = [];
     const queryParams: any[] = [];
+    let paramIndex = 1;
 
     if (userId) {
-      whereClause = 'WHERE user_id = $1';
+      whereConditions.push(`user_id = $${paramIndex}`);
       queryParams.push(userId);
+      paramIndex++;
     }
 
+    if (status) {
+      // Trim and normalize status for comparison
+      const normalizedStatus = status.trim().toLowerCase();
+      whereConditions.push(`LOWER(TRIM(status)) = $${paramIndex}`);
+      queryParams.push(normalizedStatus);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+
     const countQuery = `SELECT COUNT(*) FROM orders ${whereClause}`;
-    const countResult = await this.pool.query(
-      whereClause ? countQuery : countQuery.replace('WHERE', ''),
-      queryParams,
-    );
+    const countResult = await this.pool.query(countQuery, queryParams);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataQuery = `SELECT * FROM orders ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    const dataQuery = `SELECT * FROM orders ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     const result = await this.pool.query(dataQuery, [
       ...queryParams,
       limit,

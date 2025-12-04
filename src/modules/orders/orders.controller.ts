@@ -14,6 +14,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
@@ -41,15 +42,22 @@ export class OrdersController {
   @Roles('admin')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all orders (admin only)' })
+  @ApiQuery({ name: 'status', required: false, type: String, description: 'Filter by order status' })
   @ApiResponse({
     status: 200,
     description: 'Paginated list of all orders',
     type: PaginatedResponseDto<OrderDto>,
   })
   findAllAdmin(
-    @Query() pagination: PaginationDto,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
   ): Promise<PaginatedResponseDto<OrderDto>> {
-    return this.ordersService.findAll(pagination);
+    const pagination: PaginationDto = {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 10,
+    };
+    return this.ordersService.findAll(pagination, undefined, status);
   }
 
   @Get('my-orders')

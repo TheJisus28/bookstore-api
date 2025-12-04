@@ -23,12 +23,36 @@ export class ReportsController {
   @ApiOperation({ summary: 'Generate sales report (admin only)' })
   @ApiQuery({ name: 'startDate', required: true, type: String })
   @ApiQuery({ name: 'endDate', required: true, type: String })
+  @ApiQuery({ name: 'category', required: false, type: String })
+  @ApiQuery({ name: 'author', required: false, type: String })
+  @ApiQuery({ name: 'publisher', required: false, type: String })
+  @ApiQuery({ name: 'book', required: false, type: String })
+  @ApiQuery({ name: 'minPrice', required: false, type: Number })
+  @ApiQuery({ name: 'maxPrice', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Sales report' })
   generateSalesReport(
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('category') category?: string,
+    @Query('author') author?: string,
+    @Query('publisher') publisher?: string,
+    @Query('book') book?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
+    @Query('status') status?: string,
   ): Promise<any[]> {
-    return this.reportsService.generateSalesReport(startDate, endDate);
+    return this.reportsService.generateSalesReport(
+      startDate,
+      endDate,
+      category || undefined,
+      author || undefined,
+      publisher || undefined,
+      book || undefined,
+      minPrice ? parseFloat(minPrice) : undefined,
+      maxPrice ? parseFloat(maxPrice) : undefined,
+      status || undefined,
+    );
   }
 
   @Get('book-catalog')
@@ -50,6 +74,42 @@ export class ReportsController {
   @ApiResponse({ status: 200, description: 'Customer purchase history' })
   getCustomerPurchaseHistory(): Promise<any[]> {
     return this.reportsService.getCustomerPurchaseHistory();
+  }
+
+  @Get('sold-books')
+  @ApiOperation({ summary: 'Get sold books report (admin only)' })
+  @ApiQuery({ name: 'startDate', required: true, type: String })
+  @ApiQuery({ name: 'endDate', required: true, type: String })
+  @ApiQuery({ name: 'category', required: false, type: String })
+  @ApiQuery({ name: 'author', required: false, type: String })
+  @ApiQuery({ name: 'publisher', required: false, type: String })
+  @ApiQuery({ name: 'book', required: false, type: String })
+  @ApiQuery({ name: 'minPrice', required: false, type: Number })
+  @ApiQuery({ name: 'maxPrice', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Sold books report' })
+  getSoldBooks(
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('category') category?: string,
+    @Query('author') author?: string,
+    @Query('publisher') publisher?: string,
+    @Query('book') book?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
+    @Query('status') status?: string,
+  ): Promise<any[]> {
+    return this.reportsService.getSoldBooks(
+      startDate,
+      endDate,
+      category || undefined,
+      author || undefined,
+      publisher || undefined,
+      book || undefined,
+      minPrice ? parseFloat(minPrice) : undefined,
+      maxPrice ? parseFloat(maxPrice) : undefined,
+      status || undefined,
+    );
   }
 }
 
