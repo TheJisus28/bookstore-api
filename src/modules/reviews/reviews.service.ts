@@ -73,6 +73,20 @@ export class ReviewsService {
       throw new NotFoundException('Book not found');
     }
 
+    // Check if user has purchased this book
+    const purchaseCheck = await this.pool.query(
+      `SELECT oi.id 
+       FROM order_items oi
+       INNER JOIN orders o ON oi.order_id = o.id
+       WHERE o.user_id = $1 AND oi.book_id = $2 AND o.status IN ('shipped', 'delivered', 'completed')
+       LIMIT 1`,
+      [userId, book_id],
+    );
+
+    if (purchaseCheck.rows.length === 0) {
+      throw new BadRequestException('You can only review books you have purchased');
+    }
+
     // Check if user already reviewed this book
     const existingReview = await this.pool.query(
       'SELECT id FROM reviews WHERE user_id = $1 AND book_id = $2',
@@ -132,5 +146,32 @@ export class ReviewsService {
     }
 
     await this.pool.query('DELETE FROM reviews WHERE id = $1', [id]);
+  }
+
+  async canReview(userId: string, bookId: string): Promise<{ canReview: boolean; hasReviewed: boolean }> {
+    // Check if user has purchased this book
+    const purchaseCheck = await this.pool.query(
+      `SELECT oi.id 
+       FROM order_items oi
+       INNER JOIN orders o ON oi.order_id = o.id
+       WHERE o.user_id = $1 AND oi.book_id = $2 AND o.status IN ('shipped', 'delivered', 'completed')
+       LIMIT 1`,
+      [userId, bookId],
+    );
+
+    const hasPurchased = purchaseCheck.rows.length > 0;
+
+    // Check if user already reviewed this book
+    const existingReview = await this.pool.query(
+      'SELECT id FROM reviews WHERE user_id = $1 AND book_id = $2',
+      [userId, bookId],
+    );
+
+    const hasReviewed = existingReview.rows.length > 0;
+
+    return {
+      canReview: hasPurchased && !hasReviewed,
+      hasReviewed,
+    };
   }
 }

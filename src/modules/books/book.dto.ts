@@ -4,7 +4,6 @@ import {
   IsNumber,
   IsOptional,
   IsBoolean,
-  IsUUID,
   Min,
   IsDateString,
 } from 'class-validator';
@@ -97,12 +96,12 @@ export class CreateBookDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   publisher_id?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   category_id?: string;
 
   @ApiProperty({ required: false })
@@ -156,12 +155,12 @@ export class UpdateBookDto {
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   publisher_id?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   category_id?: string;
 
   @ApiProperty({ required: false })

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 
 export class OrderDto {
   @ApiProperty()
@@ -38,7 +38,7 @@ export class OrderDto {
 
 export class CreateOrderDto {
   @ApiProperty()
-  @IsUUID()
+  @IsString()
   address_id: string;
 
   @ApiProperty({ required: false })

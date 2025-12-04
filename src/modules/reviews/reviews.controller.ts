@@ -47,6 +47,19 @@ export class ReviewsController {
     return this.reviewsService.findByBook(bookId, pagination);
   }
 
+  @Get('can-review/:bookId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check if user can review a book (has purchased it)' })
+  @ApiParam({ name: 'bookId', description: 'Book UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Whether user can review the book',
+  })
+  canReview(@Request() req, @Param('bookId') bookId: string): Promise<{ canReview: boolean; hasReviewed: boolean }> {
+    return this.reviewsService.canReview(req.user.id, bookId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a review by ID' })
   @ApiParam({ name: 'id', description: 'Review UUID' })

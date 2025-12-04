@@ -151,4 +151,35 @@ export class OrdersService {
     );
     return result.rows as OrderItemDto[];
   }
+
+  async findMyPurchasedBooks(userId: string): Promise<any[]> {
+    const result = await this.pool.query(
+      `SELECT DISTINCT
+        b.id,
+        b.title,
+        b.isbn,
+        b.price,
+        b.cover_image_url,
+        b.description,
+        b.language,
+        b.pages,
+        b.publication_date,
+        MAX(o.created_at) as last_purchased_at,
+        CASE WHEN r.id IS NOT NULL THEN true ELSE false END as has_review,
+        r.id as review_id,
+        r.rating as review_rating,
+        r.comment as review_comment
+      FROM books b
+      INNER JOIN order_items oi ON b.id = oi.book_id
+      INNER JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN reviews r ON b.id = r.book_id AND r.user_id = $1
+      WHERE o.user_id = $1 
+        AND o.status IN ('shipped', 'delivered', 'completed')
+      GROUP BY b.id, b.title, b.isbn, b.price, b.cover_image_url, b.description, 
+               b.language, b.pages, b.publication_date, r.id, r.rating, r.comment
+      ORDER BY last_purchased_at DESC`,
+      [userId],
+    );
+    return result.rows;
+  }
 }

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsBoolean, IsOptional } from 'class-validator';
+import { IsString, IsBoolean, IsOptional } from 'class-validator';
 
 export class BookAuthorDto {
   @ApiProperty()
@@ -20,7 +20,7 @@ export class BookAuthorDto {
 
 export class AddAuthorToBookDto {
   @ApiProperty()
-  @IsUUID()
+  @IsString()
   author_id: string;
 
   @ApiProperty({ required: false, default: false })

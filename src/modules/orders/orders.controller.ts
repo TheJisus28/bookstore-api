@@ -68,6 +68,18 @@ export class OrdersController {
     return this.ordersService.findAll(pagination, req.user.id);
   }
 
+  @Get('my-books')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get my purchased books (customer)' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of purchased books with review status',
+  })
+  findMyBooks(@Request() req): Promise<any[]> {
+    return this.ordersService.findMyPurchasedBooks(req.user.id);
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
