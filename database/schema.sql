@@ -1,5 +1,5 @@
 -- =====================================================
--- E-commerce Bookstore Database Schema
+-- E-commerce Bookstore Database Schema and Data
 -- PostgreSQL 16+
 -- =====================================================
 
@@ -40,6 +40,17 @@ DROP PROCEDURE IF EXISTS process_return(UUID, UUID);
 DROP TRIGGER IF EXISTS update_stock_on_order ON order_items;
 DROP TRIGGER IF EXISTS update_book_rating ON reviews;
 DROP TRIGGER IF EXISTS audit_order_changes ON orders;
+DROP TRIGGER IF EXISTS update_user_timestamp ON users;
+DROP TRIGGER IF EXISTS update_book_timestamp ON books;
+DROP TRIGGER IF EXISTS update_cart_item_timestamp ON cart_items;
+
+-- Drop related functions
+DROP FUNCTION IF EXISTS update_stock_on_order();
+DROP FUNCTION IF EXISTS update_book_rating();
+DROP FUNCTION IF EXISTS audit_order_changes();
+DROP FUNCTION IF EXISTS update_user_timestamp();
+DROP FUNCTION IF EXISTS update_book_timestamp();
+DROP FUNCTION IF EXISTS update_cart_item_timestamp();
 
 -- =====================================================
 -- TABLES
@@ -426,8 +437,8 @@ AS $$
 DECLARE
     new_order_id UUID;
     cart_total NUMERIC;
-    discount_amount NUMERIC := 0;
-    shipping_cost NUMERIC := 5.00; -- Fixed shipping cost
+    calculated_discount NUMERIC := 0;
+    calculated_shipping_cost NUMERIC := 5.00; -- Fixed shipping cost
     cart_item RECORD;
 BEGIN
     -- Calculate cart total
@@ -443,12 +454,12 @@ BEGIN
     
     -- Apply discount if code provided (simplified - in real app would check discount table)
     IF discount_code IS NOT NULL THEN
-        discount_amount := cart_total * 0.10; -- 10% discount example
+        calculated_discount := cart_total * 0.10; -- 10% discount example
     END IF;
     
     -- Create order
     INSERT INTO orders (user_id, address_id, total_amount, shipping_cost, discount_amount, status)
-    VALUES (user_uuid, address_uuid, cart_total - discount_amount + shipping_cost, shipping_cost, discount_amount, 'pending')
+    VALUES (user_uuid, address_uuid, cart_total - calculated_discount + calculated_shipping_cost, calculated_shipping_cost, calculated_discount, 'pending')
     RETURNING id INTO new_order_id;
     
     -- Create order items and update stock
@@ -476,9 +487,9 @@ BEGIN
     -- Clear cart
     DELETE FROM cart_items WHERE user_id = user_uuid;
     
-    -- Update order total
+    -- Update order total (Recalculate total amount from order items)
     UPDATE orders
-    SET total_amount = calculate_order_total(new_order_id) - discount_amount + shipping_cost
+    SET total_amount = calculate_order_total(new_order_id) - calculated_discount + calculated_shipping_cost
     WHERE id = new_order_id;
     
     COMMIT;
@@ -583,7 +594,7 @@ BEGIN
     -- Restore stock
     CALL update_book_stock(book_uuid, order_item.quantity);
     
-    -- Update order status if all items returned
+    -- Update order status if all items returned (simplified check)
     UPDATE orders
     SET status = 'returned',
         updated_at = CURRENT_TIMESTAMP
@@ -598,15 +609,14 @@ END;
 $$;
 
 -- =====================================================
--- TRIGGERS
+-- TRIGGERS & TRIGGER FUNCTIONS
 -- =====================================================
 
 -- Trigger to update stock when order item is created
 CREATE OR REPLACE FUNCTION update_stock_on_order()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Stock is already updated in the checkout procedure
-    -- This trigger is for direct order item inserts (if needed)
+    -- Stock is already updated in the checkout procedure, this is for direct inserts
     UPDATE books
     SET stock = stock - NEW.quantity,
         updated_at = CURRENT_TIMESTAMP
@@ -625,9 +635,8 @@ CREATE TRIGGER update_stock_on_order
 CREATE OR REPLACE FUNCTION update_book_rating()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- In a real application, you might want to store this in a books.rating column
-    -- For now, we'll just ensure the trigger fires
-    -- The rating is calculated on-the-fly using the function
+    -- Dummy trigger function to demonstrate the trigger
+    -- The actual calculation is done in functions/views
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -805,28 +814,73 @@ INNER JOIN (
 WHERE u.role = 'customer';
 
 -- =====================================================
--- INITIAL DATA (Optional - for testing)
+-- INITIAL DATA
 -- =====================================================
 
--- Insert default admin user (password should be hashed in real application)
--- Password: admin123 (should be properly hashed)
-INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES
-('admin@libreria.com', '$2b$10$example_hash_here', 'Admin', 'User', 'admin');
+-- UUIDs Fijos para Referencia
+-- Nota: En un entorno real, usarías variables o confiarías en la función uuid_generate_v4()
+-- Se usan aquí para mantener la coherencia de las referencias.
 
--- Insert sample categories
-INSERT INTO categories (name, description) VALUES
-('Ficción', 'Novelas y obras de ficción'),
-('No Ficción', 'Libros informativos y educativos'),
-('Ciencia', 'Libros de ciencia y tecnología'),
-('Historia', 'Libros históricos'),
-('Biografía', 'Biografías y autobiografías');
+-- USUARIOS (Necesario para Addresses y Reviews)
+INSERT INTO users (id, email, password_hash, first_name, last_name, role) 
+VALUES 
+('90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', 'cliente@prueba.com', '$2a$10$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', 'Cliente', 'Prueba', 'customer'),
+('90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1c', 'admin@libreria.com', '$2a$10$YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY', 'Admin', 'User', 'admin');
 
--- Insert sample publishers
-INSERT INTO publishers (name, city, country) VALUES
-('Editorial Planeta', 'Barcelona', 'España'),
-('Penguin Random House', 'Madrid', 'España'),
-('Editorial Anagrama', 'Barcelona', 'España');
+
+-- CATEGORIAS
+INSERT INTO categories (id, name, description) VALUES
+('50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'Ficción', 'Novelas y obras de ficción'),
+('60f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', 'No Ficción', 'Libros informativos y educativos'),
+('70f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', 'Ciencia', 'Libros de ciencia y tecnología'),
+('80f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', 'Historia', 'Libros históricos'),
+('90f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', 'Biografía', 'Biografías y autobiografías'),
+('0f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1c', 'Ciencia Ficción', 'Género de ficción especulativa.', (SELECT id FROM categories WHERE name = 'Ficción')),
+('1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1d', 'Autoayuda', 'Libros para el desarrollo personal.', (SELECT id FROM categories WHERE name = 'No Ficción'));
+
+-- EDITORIALES
+INSERT INTO publishers (id, name, city, country) VALUES
+('a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'Editorial Planeta', 'Barcelona', 'España'),
+('b1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', 'Penguin Random House', 'Madrid', 'España'),
+('c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', 'Editorial Anagrama', 'Barcelona', 'España'),
+('d1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', 'Salamandra', 'Barcelona', 'España'),
+('e1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', 'Vintage Español', 'Nueva York', 'EEUU');
+
+-- AUTORES
+INSERT INTO authors (id, first_name, last_name, bio, birth_date, nationality) VALUES
+('6a4b13e0-0c4d-48a1-94e8-23d20f18c8e1', 'Gabriel', 'García Márquez', 'Nobel de Literatura.', '1927-03-06', 'Colombiana'),
+('8c3a1f7d-5e2b-40d3-9f8c-6d9e0b12a3f0', 'Isabel', 'Allende', 'Escritora chilena.', '1942-08-02', 'Chilena'),
+('4e2b0d9f-3c8a-4f6e-8d7b-9a1b2c3d4e5f', 'Carl', 'Sagan', 'Divulgador científico.', '1934-11-09', 'Estadounidense'),
+('b0f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1c', 'Rosa', 'Montero', 'Periodista y escritora española.', '1951-01-03', 'Española'),
+('c1e0f3a2-b4c5-d6e7-f8a9-b0c1d2e3f4a5', 'Yuval Noah', 'Harari', 'Historiador israelí.', '1976-02-24', 'Israelí');
+
+-- LIBROS
+INSERT INTO books (id, isbn, title, description, price, stock, pages, publication_date, language, publisher_id, category_id, cover_image_url) VALUES
+('1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d', '978-8420484725', 'Cien años de soledad', 'La obra maestra de Gabriel García Márquez.', 19.99, 150, 496, '1967-05-30', 'Spanish', (SELECT id FROM publishers WHERE name = 'Editorial Planeta'), (SELECT id FROM categories WHERE name = 'Ficción'), 'http://example.com/cover1.jpg'),
+('2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e', '978-8499081514', 'La casa de los espíritus', 'Novela debut de Isabel Allende.', 15.50, 80, 432, '1982-01-01', 'Spanish', (SELECT id FROM publishers WHERE name = 'Editorial Planeta'), (SELECT id FROM categories WHERE name = 'Ficción'), 'http://example.com/cover2.jpg'),
+('3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f', '978-0345331359', 'Cosmos', 'Un viaje a través del espacio y el tiempo.', 25.99, 200, 365, '1980-10-01', 'English', (SELECT id FROM publishers WHERE name = 'Penguin Random House'), (SELECT id FROM categories WHERE name = 'Ciencia'), 'http://example.com/cover3.jpg'),
+('4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a', '978-8432235948', 'La ridícula idea de no volver a verte', 'Un homenaje a Marie Curie.', 17.00, 95, 208, '2013-05-01', 'Spanish', (SELECT id FROM publishers WHERE name = 'Salamandra'), (SELECT id FROM categories WHERE name = 'Biografía'), 'http://example.com/cover4.jpg'),
+('5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b', '978-6073155381', 'Sapiens: De animales a dioses', 'Una breve historia de la humanidad.', 22.99, 120, 498, '2014-09-01', 'Spanish', (SELECT id FROM publishers WHERE name = 'Vintage Español'), (SELECT id FROM categories WHERE name = 'Historia'), 'http://example.com/cover5.jpg');
+
+-- RELACION LIBRO-AUTOR
+INSERT INTO book_authors (book_id, author_id, is_primary) VALUES
+((SELECT id FROM books WHERE isbn = '978-8420484725'), (SELECT id FROM authors WHERE last_name = 'García Márquez'), TRUE),
+((SELECT id FROM books WHERE isbn = '978-8499081514'), (SELECT id FROM authors WHERE last_name = 'Allende'), TRUE),
+((SELECT id FROM books WHERE isbn = '978-0345331359'), (SELECT id FROM authors WHERE last_name = 'Sagan'), TRUE),
+((SELECT id FROM books WHERE isbn = '978-8432235948'), (SELECT id FROM authors WHERE last_name = 'Montero'), TRUE),
+((SELECT id FROM books WHERE isbn = '978-6073155381'), (SELECT id FROM authors WHERE last_name = 'Harari'), TRUE);
+
+-- DIRECCIONES
+INSERT INTO addresses (id, user_id, street, city, state, postal_code, country, is_default) VALUES
+('d1a2b3c4-e5f6-7a8b-9c0d-1e2f3a4b5c6d', '90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', 'Calle Falsa 123', 'Madrid', 'Comunidad de Madrid', '28001', 'España', TRUE),
+('e2f3a4b5-c6d7-8e9f-0a1b-2c3d4e5f6a7b', '90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', 'Avenida Siempreviva 742', 'Barcelona', 'Cataluña', '08005', 'España', FALSE);
+
+-- RESEÑAS
+INSERT INTO reviews (user_id, book_id, rating, comment) VALUES
+('90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', (SELECT id FROM books WHERE title = 'Cien años de soledad'), 5, 'Una obra que te transporta. Genial.'),
+('90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', (SELECT id FROM books WHERE title = 'La casa de los espíritus'), 4, 'Muy buen libro, un poco lento al principio.'),
+('90e8c7b6-1a2d-4f3e-8c7a-6b5d4e3c2a1b', (SELECT id FROM books WHERE title = 'Cosmos'), 5, 'Imprescindible para amantes de la ciencia.');
 
 -- =====================================================
--- END OF SCHEMA
+-- END OF SCHEMA AND DATA
 -- =====================================================

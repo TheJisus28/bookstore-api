@@ -74,4 +74,13 @@ export class OrderItemDto {
 
   @ApiProperty()
   created_at: Date;
+
+  @ApiProperty({ required: false })
+  title?: string;
+
+  @ApiProperty({ required: false })
+  isbn?: string;
+
+  @ApiProperty({ required: false })
+  cover_image_url?: string;
 }

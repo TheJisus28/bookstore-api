@@ -1,4 +1,9 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../../common/config/database/database.config';
 import {
@@ -73,7 +78,10 @@ export class OrdersService {
     return order;
   }
 
-  async create(userId: string, createOrderDto: CreateOrderDto): Promise<OrderDto> {
+  async create(
+    userId: string,
+    createOrderDto: CreateOrderDto,
+  ): Promise<OrderDto> {
     const { address_id, discount_code } = createOrderDto;
 
     // Use the stored procedure to process checkout
@@ -102,7 +110,10 @@ export class OrdersService {
     }
 
     const { status } = updateOrderStatusDto;
-    const updateFields: string[] = ['status = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    const updateFields: string[] = [
+      'status = $1',
+      'updated_at = CURRENT_TIMESTAMP',
+    ];
 
     if (status === 'shipped') {
       updateFields.push('shipped_at = CURRENT_TIMESTAMP');
@@ -110,8 +121,9 @@ export class OrdersService {
       updateFields.push('delivered_at = CURRENT_TIMESTAMP');
     }
 
+    // status is $1, id is $2
     const result = await this.pool.query(
-      `UPDATE orders SET ${updateFields.join(', ')} WHERE id = $${updateFields.length + 1} RETURNING *`,
+      `UPDATE orders SET ${updateFields.join(', ')} WHERE id = $2 RETURNING *`,
       [status, id],
     );
 
@@ -120,7 +132,21 @@ export class OrdersService {
 
   async findOrderItems(orderId: string): Promise<OrderItemDto[]> {
     const result = await this.pool.query(
-      'SELECT * FROM order_items WHERE order_id = $1',
+      `SELECT 
+        oi.id,
+        oi.order_id,
+        oi.book_id,
+        oi.quantity,
+        oi.unit_price,
+        oi.subtotal,
+        oi.created_at,
+        b.title,
+        b.isbn,
+        b.cover_image_url
+      FROM order_items oi
+      JOIN books b ON oi.book_id = b.id
+      WHERE oi.order_id = $1
+      ORDER BY oi.created_at`,
       [orderId],
     );
     return result.rows as OrderItemDto[];

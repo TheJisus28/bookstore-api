@@ -1,4 +1,9 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../../common/config/database/database.config';
 import {
@@ -7,8 +12,15 @@ import {
   CreateBookDto,
   UpdateBookDto,
 } from './book.dto';
-import { BookAuthorDto, AddAuthorToBookDto, BookWithAuthorsDto } from './book-authors.dto';
-import { PaginationDto, PaginatedResponseDto } from '../../common/dto/pagination.dto';
+import {
+  BookAuthorDto,
+  AddAuthorToBookDto,
+  BookWithAuthorsDto,
+} from './book-authors.dto';
+import {
+  PaginationDto,
+  PaginatedResponseDto,
+} from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class BooksService {
@@ -21,9 +33,7 @@ export class BooksService {
     const { page = 1, limit = 10 } = pagination;
     const offset = (page - 1) * limit;
 
-    const whereClause = includeInactive
-      ? ''
-      : 'WHERE is_active = true';
+    const whereClause = includeInactive ? '' : 'WHERE is_active = true';
 
     const countResult = await this.pool.query(
       `SELECT COUNT(*) FROM books ${whereClause}`,
@@ -124,10 +134,9 @@ export class BooksService {
   }
 
   async remove(id: string): Promise<void> {
-    const result = await this.pool.query(
-      'DELETE FROM books WHERE id = $1',
-      [id],
-    );
+    const result = await this.pool.query('DELETE FROM books WHERE id = $1', [
+      id,
+    ]);
 
     if (result.rowCount === 0) {
       throw new NotFoundException('Book not found');
@@ -264,7 +273,11 @@ export class BooksService {
       `INSERT INTO book_authors (book_id, author_id, is_primary)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [bookId, addAuthorToBookDto.author_id, addAuthorToBookDto.is_primary || false],
+      [
+        bookId,
+        addAuthorToBookDto.author_id,
+        addAuthorToBookDto.is_primary || false,
+      ],
     );
 
     return result.rows[0] as BookAuthorDto;

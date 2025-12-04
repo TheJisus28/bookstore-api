@@ -45,4 +45,3 @@ export class BookWithAuthorsDto {
   @ApiProperty()
   is_primary: boolean;
 }
-
