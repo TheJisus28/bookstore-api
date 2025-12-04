@@ -28,6 +28,7 @@ DROP TABLE IF EXISTS categories CASCADE;
 DROP FUNCTION IF EXISTS calculate_order_total(UUID);
 DROP FUNCTION IF EXISTS apply_discount(NUMERIC, NUMERIC);
 DROP FUNCTION IF EXISTS search_books(TEXT, UUID, NUMERIC, NUMERIC, INTEGER);
+DROP FUNCTION IF EXISTS search_books_extended(TEXT, UUID, UUID, UUID, NUMERIC, NUMERIC, NUMERIC, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, TEXT);
 DROP FUNCTION IF EXISTS validate_stock(UUID, INTEGER);
 DROP FUNCTION IF EXISTS calculate_book_rating(UUID);
 DROP FUNCTION IF EXISTS get_bestsellers(INTEGER, DATE, DATE);
@@ -116,7 +117,7 @@ CREATE TABLE books (
     language VARCHAR(50) DEFAULT 'Spanish',
     publisher_id UUID REFERENCES publishers(id) ON DELETE SET NULL,
     category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
-    cover_image_url VARCHAR(500),
+    cover_image_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE
@@ -366,7 +367,8 @@ RETURNS TABLE (
     publisher_name VARCHAR,
     category_name VARCHAR,
     publication_date DATE,
-    language VARCHAR
+    language VARCHAR,
+    cover_image_url VARCHAR
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -381,7 +383,8 @@ BEGIN
             p.name as publisher_name,
             c.name as category_name,
             b.publication_date,
-            b.language
+            b.language,
+            b.cover_image_url
         FROM books b
         LEFT JOIN publishers p ON b.publisher_id = p.id
         LEFT JOIN categories c ON b.category_id = c.id
@@ -422,7 +425,8 @@ BEGIN
         filtered_books.publisher_name,
         filtered_books.category_name,
         filtered_books.publication_date,
-        filtered_books.language
+        filtered_books.language,
+        filtered_books.cover_image_url
     FROM filtered_books
     ORDER BY 
         CASE 
@@ -1019,7 +1023,7 @@ INSERT INTO books (id, isbn, title, description, price, stock, pages, publicatio
 ('2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e', '978-8499081514', 'La casa de los espíritus', 'Novela debut de Isabel Allende que cuenta la historia de tres generaciones de mujeres en Chile.', 15.50, 80, 432, '1982-01-01', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'http://example.com/cover2.jpg'),
 ('3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f', '978-8420412146', 'El amor en los tiempos del cólera', 'Historia de amor que se desarrolla a lo largo de más de cincuenta años.', 18.50, 120, 464, '1985-01-01', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'https://www.penguinlibros.com/co/1694026-large_default/el-amor-en-los-tiempos-del-colera.webp'),
 ('4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a', '978-8420412147', 'La ciudad y los perros', 'Primera novela de Mario Vargas Llosa, ambientada en un colegio militar de Lima.', 16.99, 90, 320, '1963-01-01', 'Spanish', 'a2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1d', '50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'http://example.com/cover4.jpg'),
-('5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b', '978-8420412148', 'Ficciones', 'Colección de cuentos de Jorge Luis Borges, considerada una de las obras maestras de la literatura universal.', 14.99, 110, 192, '1944-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'http://example.com/cover5.jpg'),
+('5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b', '978-8420412148', 'Ficciones', 'Colección de cuentos de Jorge Luis Borges, considerada una de las obras maestras de la literatura universal.', 14.99, 110, 192, '1944-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '50f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', 'https://images.cdn2.buscalibre.com/fit-in/360x360/45/d0/45d01f060175c9747acb589c384b1ab0.jpg'),
 ('6f7a8b9c-0d1e-2f3a-4b5c-6d7e8f9a0b1c', '978-8420412149', 'Rayuela', 'Novela experimental de Julio Cortázar que puede leerse de múltiples formas.', 17.50, 95, 736, '1963-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover6.jpg'),
 -- Ciencia y Divulgación
 ('7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d', '978-0345331359', 'Cosmos', 'Un viaje a través del espacio y el tiempo con Carl Sagan.', 25.99, 200, 365, '1980-10-01', 'English', 'b1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', '70f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', 'https://images.cdn2.buscalibre.com/fit-in/360x360/fa/3f/fa3f54af491cf83b8f216bb24af17a83.jpg'),
@@ -1027,7 +1031,7 @@ INSERT INTO books (id, isbn, title, description, price, stock, pages, publicatio
 ('9c0d1e2f-3a4b-5c6d-7e8f-9a0b1c2d3e4f', '978-0345331361', 'Una breve historia de casi todo', 'Divulgación científica accesible de Bill Bryson.', 24.99, 160, 544, '2003-01-01', 'English', 'b1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', '70f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', 'http://example.com/cover9.jpg'),
 -- Historia
 ('0d1e2f3a-4b5c-6d7e-8f9a-b1c2d3e4f5a6', '978-6073155381', 'Sapiens: De animales a dioses', 'Una breve historia de la humanidad por Yuval Noah Harari.', 22.99, 120, 498, '2014-09-01', 'Spanish', 'e1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', '80f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', 'http://example.com/cover10.jpg'),
-('1e2f3a4b-5c6d-7e8f-9a0b-1c2d3e4f5a6b', '978-6073155382', 'Homo Deus: Breve historia del mañana', 'Continuación de Sapiens sobre el futuro de la humanidad.', 23.50, 100, 496, '2016-01-01', 'Spanish', 'e1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', '80f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', 'http://example.com/cover11.jpg'),
+('1e2f3a4b-5c6d-7e8f-9a0b-1c2d3e4f5a6b', '978-6073155382', 'Homo Deus: Breve historia del mañana', 'Continuación de Sapiens sobre el futuro de la humanidad.', 23.50, 100, 496, '2016-01-01', 'Spanish', 'e1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', '80f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', 'https://m.media-amazon.com/images/I/71N-vXp3CdL._AC_UF1000,1000_QL80_.jpg'),
 -- Biografías
 ('2f3a4b5c-6d7e-8f9a-0b1c-2d3e4f5a6b7c', '978-8432235948', 'La ridícula idea de no volver a verte', 'Un homenaje a Marie Curie por Rosa Montero.', 17.00, 95, 208, '2013-05-01', 'Spanish', 'd1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', '90f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1b', 'http://example.com/cover12.jpg'),
 -- Ciencia Ficción
@@ -1035,20 +1039,20 @@ INSERT INTO books (id, isbn, title, description, price, stock, pages, publicatio
 ('4b5c6d7e-8f9a-0b1c-2d3e-4f5a6b7c8d9e', '978-8498381492', '1984', 'Distopía clásica de George Orwell sobre un futuro totalitario.', 15.99, 200, 352, '1949-06-08', 'Spanish', 'b1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', '0f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'https://images.cdn1.buscalibre.com/fit-in/360x360/67/c9/67c9014aec833f3b2ef2952e6e6cd56a.jpg'),
 ('5c6d7e8f-9a0b-1c2d-3e4f-5a6b7c8d9e0f', '978-8498381493', 'Un mundo feliz', 'Distopía de Aldous Huxley sobre una sociedad futura controlada.', 16.50, 175, 288, '1932-01-01', 'Spanish', 'b1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0e', '0f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover15.jpg'),
 -- Fantasía
-('6d7e8f9a-0b1c-2d3e-4f5a-6b7c8d9e0f1a', '978-8498381494', 'El señor de los anillos', 'Trilogía épica de fantasía de J.R.R. Tolkien.', 29.99, 250, 1216, '1954-07-29', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover16.jpg'),
-('7e8f9a0b-1c2d-3e4f-5a6b-7c8d9e0f1a2b', '978-8498381495', 'Harry Potter y la piedra filosofal', 'Primer libro de la serie de J.K. Rowling.', 19.99, 300, 320, '1997-06-26', 'Spanish', 'd1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover17.jpg'),
-('8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c', '978-8498381496', 'Juego de tronos', 'Primer libro de Canción de hielo y fuego de George R.R. Martin.', 24.99, 180, 832, '1996-08-01', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover18.jpg'),
+('6d7e8f9a-0b1c-2d3e-4f5a-6b7c8d9e0f1a', '978-8498381494', 'El señor de los anillos', 'Trilogía épica de fantasía de J.R.R. Tolkien.', 29.99, 250, 1216, '1954-07-29', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'https://images.cdn1.buscalibre.com/fit-in/360x360/66/1a/661a3760157941a94cb8db3f5a9d5060.jpg'),
+('7e8f9a0b-1c2d-3e4f-5a6b-7c8d9e0f1a2b', '978-8498381495', 'Harry Potter y la piedra filosofal', 'Primer libro de la serie de J.K. Rowling.', 19.99, 300, 320, '1997-06-26', 'Spanish', 'd1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1a', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'https://images.cdn2.buscalibre.com/fit-in/360x360/e6/5f/e65f54742ad7bbc41903d17f75b77d78.jpg'),
+('8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c', '978-8498381496', 'Juego de tronos', 'Primer libro de Canción de hielo y fuego de George R.R. Martin.', 24.99, 180, 832, '1996-08-01', 'Spanish', 'a1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0d', '1f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSjHZajpupQgYd0i5JBnR3R1WuqlbmcBKj7otLpzCIgJMDLjzaLy-eQCaZlWPPfqd2orpoCNNMq09myYV-HlZyjLRtTWjKbC5_HWB1fIQ&s=10'),
 -- Literatura Contemporánea
 ('9a0b1c2d-3e4f-5a6b-7c8d-9e0f1a2b3c4d', '978-8498381497', 'Tokio Blues', 'Novela de Haruki Murakami sobre la nostalgia y la pérdida.', 18.50, 130, 384, '1987-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover19.jpg'),
-('0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e', '978-8498381498', 'La amiga estupenda', 'Primer libro de la tetralogía napolitana de Elena Ferrante.', 20.99, 110, 480, '2011-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover20.jpg'),
+('0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e', '978-8498381498', 'La amiga estupenda', 'Primer libro de la tetralogía napolitana de Elena Ferrante.', 20.99, 110, 480, '2011-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'https://images.cdn3.buscalibre.com/fit-in/360x360/4e/db/4edbc2c6cd02aff33e51b0356bce513e.jpg'),
 ('1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f', '978-8498381499', 'Dientes blancos', 'Novela debut de Zadie Smith sobre identidad y multiculturalismo.', 17.99, 95, 544, '2000-01-01', 'Spanish', 'a2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1d', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'https://images.cdn2.buscalibre.com/fit-in/360x360/88/01/880166d98758e750381461b36aaa7931.jpg'),
 ('2d3e4f5a-6b7c-8d9e-0f1a-2b3c4d5e6f7a', '978-8498381500', 'Americanah', 'Novela de Chimamanda Ngozi Adichie sobre inmigración e identidad.', 19.50, 105, 608, '2013-01-01', 'Spanish', 'a2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1d', '4f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS-cqa6xf4XeFATzRuGuulHuQmaVX8pzZhAZA&s'),
 -- Misterio
-('3e4f5a6b-7c8d-9e0f-1a2b-3c4d5e6f7a8b', '978-8498381501', 'El nombre de la rosa', 'Novela histórica de misterio de Umberto Eco.', 21.99, 125, 672, '1980-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '2f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover23.jpg'),
+('3e4f5a6b-7c8d-9e0f-1a2b-3c4d5e6f7a8b', '978-8498381501', 'El nombre de la rosa', 'Novela histórica de misterio de Umberto Eco.', 21.99, 125, 672, '1980-01-01', 'Spanish', 'c1f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c0f', '2f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'https://m.media-amazon.com/images/S/pv-target-images/a56a3906b4862a1b9e4ace451a3d0e38f7e6a47a4f0154c873477fae5dd1c0eb.jpg'),
 -- Filosofía
 ('4f5a6b7c-8d9e-0f1a-2b3c-4d5e6f7a8b9c', '978-8498381502', 'Vigilar y castigar', 'Obra de Michel Foucault sobre el sistema penitenciario.', 18.99, 85, 352, '1975-01-01', 'Spanish', 'c2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1f', 'a0f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c10', 'http://example.com/cover24.jpg'),
 -- Autoayuda
-('5a6b7c8d-9e0f-1a2b-3c4d-5e6f7a8b9c0d', '978-8498381503', 'El poder del ahora', 'Guía espiritual de Eckhart Tolle sobre el presente.', 16.99, 200, 256, '1997-01-01', 'Spanish', 'd2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c2a', '5f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover25.jpg'),
+('5a6b7c8d-9e0f-1a2b-3c4d-5e6f7a8b9c0d', '978-8498381503', 'El poder del ahora', 'Guía espiritual de Eckhart Tolle sobre el presente.', 16.99, 200, 256, '1997-01-01', 'Spanish', 'd2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c2a', '5f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'https://m.media-amazon.com/images/S/compressed.photo.goodreads.com/books/1365593338i/17789074.jpg'),
 ('6b7c8d9e-0f1a-2b3c-4d5e-6f7a8b9c0d1e', '978-8498381504', 'Los 7 hábitos de la gente altamente efectiva', 'Clásico de desarrollo personal de Stephen Covey.', 19.99, 180, 432, '1989-01-01', 'Spanish', 'd2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c2a', '5f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover26.jpg'),
 -- Negocios
 ('7c8d9e0f-1a2b-3c4d-5e6f-7a8b9c0d1e2f', '978-8498381505', 'Padre rico, padre pobre', 'Libro sobre educación financiera de Robert Kiyosaki.', 17.50, 160, 336, '1997-01-01', 'Spanish', 'c2f7e8a3-2d1c-4b5a-8c9d-4e6f3a2b1c1f', '6f7e8a30-2d1c-4b5a-8c9d-4e6f3a2b1c20', 'http://example.com/cover27.jpg'),

@@ -198,4 +198,13 @@ export class BookSearchResultDto {
 
   @ApiProperty({ required: false })
   category_name?: string;
+
+  @ApiProperty({ required: false })
+  publication_date?: string;
+
+  @ApiProperty({ required: false })
+  language?: string;
+
+  @ApiProperty({ required: false })
+  cover_image_url?: string;
 }
