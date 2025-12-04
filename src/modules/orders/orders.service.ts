@@ -1,0 +1,128 @@
+import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Pool } from 'pg';
+import { DATABASE_POOL } from '../../common/config/database/database.config';
+import {
+  OrderDto,
+  OrderItemDto,
+  CreateOrderDto,
+  UpdateOrderStatusDto,
+} from './order.dto';
+import {
+  PaginationDto,
+  PaginatedResponseDto,
+} from '../../common/dto/pagination.dto';
+
+@Injectable()
+export class OrdersService {
+  constructor(@Inject(DATABASE_POOL) private pool: Pool) {}
+
+  async findAll(
+    pagination: PaginationDto,
+    userId?: string,
+  ): Promise<PaginatedResponseDto<OrderDto>> {
+    const { page = 1, limit = 10 } = pagination;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    const queryParams: any[] = [];
+
+    if (userId) {
+      whereClause = 'WHERE user_id = $1';
+      queryParams.push(userId);
+    }
+
+    const countQuery = `SELECT COUNT(*) FROM orders ${whereClause}`;
+    const countResult = await this.pool.query(
+      whereClause ? countQuery : countQuery.replace('WHERE', ''),
+      queryParams,
+    );
+    const total = parseInt(countResult.rows[0].count);
+
+    const dataQuery = `SELECT * FROM orders ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    const result = await this.pool.query(dataQuery, [
+      ...queryParams,
+      limit,
+      offset,
+    ]);
+
+    return {
+      data: result.rows as OrderDto[],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async findOne(id: string, userId?: string): Promise<OrderDto | null> {
+    const result = await this.pool.query('SELECT * FROM orders WHERE id = $1', [
+      id,
+    ]);
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const order = result.rows[0] as OrderDto;
+
+    // Check if user has permission to view this order
+    if (userId && order.user_id !== userId) {
+      throw new ForbiddenException('You can only view your own orders');
+    }
+
+    return order;
+  }
+
+  async create(userId: string, createOrderDto: CreateOrderDto): Promise<OrderDto> {
+    const { address_id, discount_code } = createOrderDto;
+
+    // Use the stored procedure to process checkout
+    await this.pool.query('CALL process_checkout($1, $2, $3)', [
+      userId,
+      address_id,
+      discount_code || null,
+    ]);
+
+    // Get the created order
+    const result = await this.pool.query(
+      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [userId],
+    );
+
+    return result.rows[0] as OrderDto;
+  }
+
+  async updateStatus(
+    id: string,
+    updateOrderStatusDto: UpdateOrderStatusDto,
+  ): Promise<OrderDto> {
+    const existing = await this.findOne(id);
+    if (!existing) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const { status } = updateOrderStatusDto;
+    const updateFields: string[] = ['status = $1', 'updated_at = CURRENT_TIMESTAMP'];
+
+    if (status === 'shipped') {
+      updateFields.push('shipped_at = CURRENT_TIMESTAMP');
+    } else if (status === 'delivered') {
+      updateFields.push('delivered_at = CURRENT_TIMESTAMP');
+    }
+
+    const result = await this.pool.query(
+      `UPDATE orders SET ${updateFields.join(', ')} WHERE id = $${updateFields.length + 1} RETURNING *`,
+      [status, id],
+    );
+
+    return result.rows[0] as OrderDto;
+  }
+
+  async findOrderItems(orderId: string): Promise<OrderItemDto[]> {
+    const result = await this.pool.query(
+      'SELECT * FROM order_items WHERE order_id = $1',
+      [orderId],
+    );
+    return result.rows as OrderItemDto[];
+  }
+}

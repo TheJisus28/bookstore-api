@@ -1,764 +1,832 @@
 -- =====================================================
--- Workout Tracker Database Schema
+-- E-commerce Bookstore Database Schema
 -- PostgreSQL 16+
 -- =====================================================
 
--- Drop tables if they exist (in reverse order of dependencies)
-DROP TABLE IF EXISTS favorite_exercises_by_day CASCADE;
-DROP TABLE IF EXISTS exercise_sets CASCADE;
-DROP TABLE IF EXISTS workout_exercises CASCADE;
-DROP TABLE IF EXISTS workout_sessions CASCADE;
-DROP TABLE IF EXISTS exercises CASCADE;
-DROP TABLE IF EXISTS exercise_categories CASCADE;
-DROP TABLE IF EXISTS user_body_measurements CASCADE;
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- For text search
+CREATE EXTENSION IF NOT EXISTS "btree_gin"; -- For GIN indexes on btree columns
+
+-- =====================================================
+-- DROP TABLES (if they exist) - in reverse dependency order
+-- =====================================================
+
+DROP TABLE IF EXISTS order_items CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS cart_items CASCADE;
+DROP TABLE IF EXISTS reviews CASCADE;
+DROP TABLE IF EXISTS book_authors CASCADE;
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS addresses CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS authors CASCADE;
+DROP TABLE IF EXISTS publishers CASCADE;
+DROP TABLE IF EXISTS categories CASCADE;
+
+-- Drop functions and procedures
+DROP FUNCTION IF EXISTS calculate_order_total(UUID);
+DROP FUNCTION IF EXISTS apply_discount(NUMERIC, NUMERIC);
+DROP FUNCTION IF EXISTS search_books(TEXT, UUID, NUMERIC, NUMERIC, INTEGER);
+DROP FUNCTION IF EXISTS validate_stock(UUID, INTEGER);
+DROP FUNCTION IF EXISTS calculate_book_rating(UUID);
+DROP FUNCTION IF EXISTS get_bestsellers(INTEGER, DATE, DATE);
+DROP PROCEDURE IF EXISTS process_checkout(UUID, UUID, TEXT);
+DROP PROCEDURE IF EXISTS update_book_stock(UUID, INTEGER);
+DROP PROCEDURE IF EXISTS generate_sales_report(DATE, DATE);
+DROP PROCEDURE IF EXISTS process_return(UUID, UUID);
+
+-- Drop triggers
+DROP TRIGGER IF EXISTS update_stock_on_order ON order_items;
+DROP TRIGGER IF EXISTS update_book_rating ON reviews;
+DROP TRIGGER IF EXISTS audit_order_changes ON orders;
 
 -- =====================================================
--- CATALOG TABLES
+-- TABLES
 -- =====================================================
 
-CREATE TABLE exercise_categories (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(50) UNIQUE NOT NULL
-);
-
--- Insert predefined categories
-INSERT INTO exercise_categories (name) VALUES
-  ('chest'),
-  ('back'),
-  ('legs'),
-  ('shoulders'),
-  ('arms'),
-  ('abs'),
-  ('cardio'),
-  ('other');
-
--- =====================================================
--- TABLE: users
--- =====================================================
-
+-- Users table (admin and customers)
 CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  password VARCHAR(255) NOT NULL,
-  age INTEGER NOT NULL CHECK (age >= 10 AND age <= 120),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'customer')),
+    phone VARCHAR(20),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
 );
 
+-- Authors table
+CREATE TABLE authors (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    bio TEXT,
+    birth_date DATE,
+    nationality VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Publishers table
+CREATE TABLE publishers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    address TEXT,
+    city VARCHAR(100),
+    country VARCHAR(100),
+    phone VARCHAR(20),
+    email VARCHAR(255),
+    website VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Categories table (hierarchical structure)
+CREATE TABLE categories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    parent_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Books table
+CREATE TABLE books (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    isbn VARCHAR(20) UNIQUE NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    price NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
+    stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    pages INTEGER CHECK (pages > 0),
+    publication_date DATE,
+    language VARCHAR(50) DEFAULT 'Spanish',
+    publisher_id UUID REFERENCES publishers(id) ON DELETE SET NULL,
+    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    cover_image_url VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- Book-Authors relationship (many-to-many)
+CREATE TABLE book_authors (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, author_id)
+);
+
+-- Addresses table
+CREATE TABLE addresses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    street VARCHAR(255) NOT NULL,
+    city VARCHAR(100) NOT NULL,
+    state VARCHAR(100),
+    postal_code VARCHAR(20) NOT NULL,
+    country VARCHAR(100) NOT NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Orders table
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    address_id UUID NOT NULL REFERENCES addresses(id) ON DELETE RESTRICT,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned')),
+    total_amount NUMERIC(10, 2) NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+    shipping_cost NUMERIC(10, 2) DEFAULT 0 CHECK (shipping_cost >= 0),
+    discount_amount NUMERIC(10, 2) DEFAULT 0 CHECK (discount_amount >= 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    shipped_at TIMESTAMP WITH TIME ZONE,
+    delivered_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Order items table
+CREATE TABLE order_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
+    subtotal NUMERIC(10, 2) NOT NULL CHECK (subtotal >= 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Cart items table
+CREATE TABLE cart_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, book_id)
+);
+
+-- Reviews table
+CREATE TABLE reviews (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, book_id)
+);
+
+-- =====================================================
+-- INDEXES
+-- =====================================================
+
+-- Users indexes
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_active ON users(is_active);
 
--- =====================================================
--- TABLE: user_body_measurements
--- =====================================================
+-- Books indexes
+CREATE INDEX idx_books_isbn ON books(isbn);
+CREATE INDEX idx_books_title ON books USING gin(title gin_trgm_ops);
+CREATE INDEX idx_books_category ON books(category_id);
+CREATE INDEX idx_books_publisher ON books(publisher_id);
+CREATE INDEX idx_books_price ON books(price);
+CREATE INDEX idx_books_stock ON books(stock);
+CREATE INDEX idx_books_active ON books(is_active);
+CREATE INDEX idx_books_publication_date ON books(publication_date);
+-- Composite index for common filters
+CREATE INDEX idx_books_category_price ON books(category_id, price);
+CREATE INDEX idx_books_active_stock ON books(is_active, stock);
 
-CREATE TABLE user_body_measurements (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  weight DECIMAL(5,2) CHECK (weight >= 20 AND weight <= 500),
-  height DECIMAL(5,2) CHECK (height >= 50 AND height <= 300),
-  measured_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+-- Full text search index on books
+CREATE INDEX idx_books_fulltext ON books USING gin(
+    to_tsvector('spanish', coalesce(title, '') || ' ' || coalesce(description, ''))
 );
 
-CREATE INDEX idx_body_measurements_user_id ON user_body_measurements(user_id);
-CREATE INDEX idx_body_measurements_measured_at ON user_body_measurements(measured_at DESC);
+-- Authors indexes
+CREATE INDEX idx_authors_name ON authors USING gin((first_name || ' ' || last_name) gin_trgm_ops);
+
+-- Book authors indexes
+CREATE INDEX idx_book_authors_book ON book_authors(book_id);
+CREATE INDEX idx_book_authors_author ON book_authors(author_id);
+
+-- Orders indexes
+CREATE INDEX idx_orders_user ON orders(user_id);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_created_at ON orders(created_at);
+CREATE INDEX idx_orders_user_status ON orders(user_id, status);
+
+-- Order items indexes
+CREATE INDEX idx_order_items_order ON order_items(order_id);
+CREATE INDEX idx_order_items_book ON order_items(book_id);
+
+-- Cart items indexes
+CREATE INDEX idx_cart_items_user ON cart_items(user_id);
+CREATE INDEX idx_cart_items_book ON cart_items(book_id);
+
+-- Reviews indexes
+CREATE INDEX idx_reviews_book ON reviews(book_id);
+CREATE INDEX idx_reviews_user ON reviews(user_id);
+CREATE INDEX idx_reviews_rating ON reviews(rating);
+CREATE INDEX idx_reviews_book_rating ON reviews(book_id, rating);
+
+-- Addresses indexes
+CREATE INDEX idx_addresses_user ON addresses(user_id);
+
+-- Categories indexes
+CREATE INDEX idx_categories_parent ON categories(parent_id);
 
 -- =====================================================
--- TABLE: exercises
+-- FUNCTIONS
 -- =====================================================
 
-CREATE TABLE exercises (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  category_id INTEGER NOT NULL REFERENCES exercise_categories(id) ON DELETE RESTRICT,
-  is_custom BOOLEAN NOT NULL DEFAULT FALSE,
-  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  CONSTRAINT check_custom_exercise CHECK (
-    (is_custom = FALSE AND user_id IS NULL) OR
-    (is_custom = TRUE AND user_id IS NOT NULL)
-  )
-);
+-- Function to calculate order total
+CREATE OR REPLACE FUNCTION calculate_order_total(order_uuid UUID)
+RETURNS NUMERIC AS $$
+DECLARE
+    total NUMERIC;
+BEGIN
+    SELECT COALESCE(SUM(subtotal), 0)
+    INTO total
+    FROM order_items
+    WHERE order_id = order_uuid;
+    
+    RETURN total;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE INDEX idx_exercises_category_id ON exercises(category_id);
-CREATE INDEX idx_exercises_user_id ON exercises(user_id);
-CREATE INDEX idx_exercises_name ON exercises(name);
+-- Function to apply discount
+CREATE OR REPLACE FUNCTION apply_discount(amount NUMERIC, discount_percent NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    IF discount_percent < 0 OR discount_percent > 100 THEN
+        RAISE EXCEPTION 'Discount percentage must be between 0 and 100';
+    END IF;
+    
+    RETURN amount * (1 - discount_percent / 100);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to search books with filters (demonstrates subqueries in FROM)
+CREATE OR REPLACE FUNCTION search_books(
+    search_term TEXT DEFAULT NULL,
+    category_uuid UUID DEFAULT NULL,
+    min_price NUMERIC DEFAULT NULL,
+    max_price NUMERIC DEFAULT NULL,
+    min_rating INTEGER DEFAULT NULL
+)
+RETURNS TABLE (
+    book_id UUID,
+    title VARCHAR,
+    price NUMERIC,
+    stock INTEGER,
+    average_rating NUMERIC,
+    total_reviews BIGINT,
+    publisher_name VARCHAR,
+    category_name VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        b.id,
+        b.title,
+        b.price,
+        b.stock,
+        COALESCE(book_ratings.avg_rating, 0)::NUMERIC(3, 2) as average_rating,
+        COALESCE(book_ratings.review_count, 0) as total_reviews,
+        p.name as publisher_name,
+        c.name as category_name
+    FROM books b
+    LEFT JOIN publishers p ON b.publisher_id = p.id
+    LEFT JOIN categories c ON b.category_id = c.id
+    LEFT JOIN (
+        -- Subquery in FROM to calculate ratings
+        SELECT 
+            book_id,
+            AVG(rating)::NUMERIC(3, 2) as avg_rating,
+            COUNT(*) as review_count
+        FROM reviews
+        GROUP BY book_id
+    ) book_ratings ON b.id = book_ratings.book_id
+    WHERE 
+        b.is_active = TRUE
+        AND (search_term IS NULL OR 
+             to_tsvector('spanish', coalesce(b.title, '') || ' ' || coalesce(b.description, '')) 
+             @@ plainto_tsquery('spanish', search_term))
+        AND (category_uuid IS NULL OR b.category_id = category_uuid)
+        AND (min_price IS NULL OR b.price >= min_price)
+        AND (max_price IS NULL OR b.price <= max_price)
+        AND (min_rating IS NULL OR COALESCE(book_ratings.avg_rating, 0) >= min_rating)
+    ORDER BY b.title;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to validate stock availability
+CREATE OR REPLACE FUNCTION validate_stock(book_uuid UUID, requested_quantity INTEGER)
+RETURNS BOOLEAN AS $$
+DECLARE
+    available_stock INTEGER;
+BEGIN
+    SELECT stock INTO available_stock
+    FROM books
+    WHERE id = book_uuid;
+    
+    IF available_stock IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    
+    RETURN available_stock >= requested_quantity;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to calculate book rating
+CREATE OR REPLACE FUNCTION calculate_book_rating(book_uuid UUID)
+RETURNS NUMERIC AS $$
+DECLARE
+    avg_rating NUMERIC;
+BEGIN
+    SELECT COALESCE(AVG(rating), 0)::NUMERIC(3, 2)
+    INTO avg_rating
+    FROM reviews
+    WHERE book_id = book_uuid;
+    
+    RETURN avg_rating;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get bestsellers (demonstrates complex subqueries)
+CREATE OR REPLACE FUNCTION get_bestsellers(
+    limit_count INTEGER DEFAULT 10,
+    start_date DATE DEFAULT NULL,
+    end_date DATE DEFAULT NULL
+)
+RETURNS TABLE (
+    book_id UUID,
+    title VARCHAR,
+    total_sold BIGINT,
+    total_revenue NUMERIC,
+    average_rating NUMERIC
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        b.id,
+        b.title,
+        COALESCE(sales.total_sold, 0) as total_sold,
+        COALESCE(sales.total_revenue, 0)::NUMERIC(10, 2) as total_revenue,
+        COALESCE(ratings.avg_rating, 0)::NUMERIC(3, 2) as average_rating
+    FROM books b
+    LEFT JOIN (
+        -- Subquery in FROM for sales aggregation
+        SELECT 
+            oi.book_id,
+            SUM(oi.quantity) as total_sold,
+            SUM(oi.subtotal) as total_revenue
+        FROM order_items oi
+        INNER JOIN orders o ON oi.order_id = o.id
+        WHERE 
+            o.status IN ('shipped', 'delivered')
+            AND (start_date IS NULL OR o.created_at::DATE >= start_date)
+            AND (end_date IS NULL OR o.created_at::DATE <= end_date)
+        GROUP BY oi.book_id
+    ) sales ON b.id = sales.book_id
+    LEFT JOIN (
+        -- Another subquery in FROM for ratings
+        SELECT 
+            book_id,
+            AVG(rating)::NUMERIC(3, 2) as avg_rating
+        FROM reviews
+        GROUP BY book_id
+    ) ratings ON b.id = ratings.book_id
+    WHERE sales.total_sold > 0 OR ratings.avg_rating > 0
+    ORDER BY sales.total_sold DESC, ratings.avg_rating DESC
+    LIMIT limit_count;
+END;
+$$ LANGUAGE plpgsql;
 
 -- =====================================================
--- TABLE: workout_sessions
+-- STORED PROCEDURES
 -- =====================================================
 
-CREATE TABLE workout_sessions (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  date DATE NOT NULL,
-  used_supplement BOOLEAN NOT NULL DEFAULT FALSE,
-  notes TEXT,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  CONSTRAINT unique_user_date UNIQUE(user_id, date)
-);
+-- Procedure to process checkout (create order from cart)
+CREATE OR REPLACE PROCEDURE process_checkout(
+    user_uuid UUID,
+    address_uuid UUID,
+    discount_code TEXT DEFAULT NULL
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    new_order_id UUID;
+    cart_total NUMERIC;
+    discount_amount NUMERIC := 0;
+    shipping_cost NUMERIC := 5.00; -- Fixed shipping cost
+    cart_item RECORD;
+BEGIN
+    -- Calculate cart total
+    SELECT COALESCE(SUM(ci.quantity * b.price), 0)
+    INTO cart_total
+    FROM cart_items ci
+    INNER JOIN books b ON ci.book_id = b.id
+    WHERE ci.user_id = user_uuid;
+    
+    IF cart_total = 0 THEN
+        RAISE EXCEPTION 'Cart is empty';
+    END IF;
+    
+    -- Apply discount if code provided (simplified - in real app would check discount table)
+    IF discount_code IS NOT NULL THEN
+        discount_amount := cart_total * 0.10; -- 10% discount example
+    END IF;
+    
+    -- Create order
+    INSERT INTO orders (user_id, address_id, total_amount, shipping_cost, discount_amount, status)
+    VALUES (user_uuid, address_uuid, cart_total - discount_amount + shipping_cost, shipping_cost, discount_amount, 'pending')
+    RETURNING id INTO new_order_id;
+    
+    -- Create order items and update stock
+    FOR cart_item IN 
+        SELECT ci.book_id, ci.quantity, b.price
+        FROM cart_items ci
+        INNER JOIN books b ON ci.book_id = b.id
+        WHERE ci.user_id = user_uuid
+    LOOP
+        -- Validate stock
+        IF NOT validate_stock(cart_item.book_id, cart_item.quantity) THEN
+            RAISE EXCEPTION 'Insufficient stock for book %', cart_item.book_id;
+        END IF;
+        
+        -- Insert order item
+        INSERT INTO order_items (order_id, book_id, quantity, unit_price, subtotal)
+        VALUES (new_order_id, cart_item.book_id, cart_item.quantity, cart_item.price, cart_item.quantity * cart_item.price);
+        
+        -- Update stock
+        UPDATE books
+        SET stock = stock - cart_item.quantity
+        WHERE id = cart_item.book_id;
+    END LOOP;
+    
+    -- Clear cart
+    DELETE FROM cart_items WHERE user_id = user_uuid;
+    
+    -- Update order total
+    UPDATE orders
+    SET total_amount = calculate_order_total(new_order_id) - discount_amount + shipping_cost
+    WHERE id = new_order_id;
+    
+    COMMIT;
+END;
+$$;
 
-CREATE INDEX idx_workout_sessions_user_id ON workout_sessions(user_id);
-CREATE INDEX idx_workout_sessions_date ON workout_sessions(date DESC);
+-- Procedure to update book stock
+CREATE OR REPLACE PROCEDURE update_book_stock(
+    book_uuid UUID,
+    quantity_change INTEGER
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_stock INTEGER;
+BEGIN
+    SELECT stock INTO current_stock
+    FROM books
+    WHERE id = book_uuid;
+    
+    IF current_stock IS NULL THEN
+        RAISE EXCEPTION 'Book not found';
+    END IF;
+    
+    IF current_stock + quantity_change < 0 THEN
+        RAISE EXCEPTION 'Insufficient stock. Current stock: %', current_stock;
+    END IF;
+    
+    UPDATE books
+    SET stock = stock + quantity_change,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = book_uuid;
+END;
+$$;
 
--- =====================================================
--- TABLE: workout_exercises
--- =====================================================
+-- Procedure to generate sales report (demonstrates complex aggregations)
+CREATE OR REPLACE PROCEDURE generate_sales_report(
+    start_date DATE,
+    end_date DATE
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    report_record RECORD;
+BEGIN
+    -- This procedure demonstrates complex queries with subqueries in FROM
+    FOR report_record IN
+        SELECT 
+            DATE_TRUNC('day', o.created_at)::DATE as sale_date,
+            COUNT(DISTINCT o.id) as total_orders,
+            COUNT(DISTINCT o.user_id) as unique_customers,
+            SUM(oi.subtotal) as total_revenue,
+            SUM(oi.quantity) as total_items_sold,
+            AVG(order_totals.order_total) as average_order_value
+        FROM orders o
+        INNER JOIN order_items oi ON o.id = oi.order_id
+        INNER JOIN (
+            -- Subquery in FROM to calculate order totals
+            SELECT 
+                order_id,
+                SUM(subtotal) as order_total
+            FROM order_items
+            GROUP BY order_id
+        ) order_totals ON o.id = order_totals.order_id
+        WHERE 
+            o.status IN ('shipped', 'delivered')
+            AND o.created_at::DATE BETWEEN start_date AND end_date
+        GROUP BY DATE_TRUNC('day', o.created_at)::DATE
+        ORDER BY sale_date
+    LOOP
+        -- In a real application, you would insert into a reports table or return results
+        RAISE NOTICE 'Date: %, Orders: %, Customers: %, Revenue: %, Items: %, Avg Order: %',
+            report_record.sale_date,
+            report_record.total_orders,
+            report_record.unique_customers,
+            report_record.total_revenue,
+            report_record.total_items_sold,
+            report_record.average_order_value;
+    END LOOP;
+END;
+$$;
 
-CREATE TABLE workout_exercises (
-  id SERIAL PRIMARY KEY,
-  workout_session_id INTEGER NOT NULL REFERENCES workout_sessions(id) ON DELETE CASCADE,
-  exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
-  "order" INTEGER NOT NULL CHECK ("order" >= 1),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  CONSTRAINT unique_session_exercise_order UNIQUE(workout_session_id, "order")
-);
-
-CREATE INDEX idx_workout_exercises_session_id ON workout_exercises(workout_session_id);
-CREATE INDEX idx_workout_exercises_exercise_id ON workout_exercises(exercise_id);
-
--- =====================================================
--- TABLE: exercise_sets
--- =====================================================
-
-CREATE TABLE exercise_sets (
-  id SERIAL PRIMARY KEY,
-  workout_exercise_id INTEGER NOT NULL REFERENCES workout_exercises(id) ON DELETE CASCADE,
-  set_number INTEGER NOT NULL CHECK (set_number >= 1),
-  reps INTEGER NOT NULL CHECK (reps >= 1),
-  weight DECIMAL(6,2) NOT NULL CHECK (weight >= 0),
-  exercise_time INTEGER NOT NULL CHECK (exercise_time >= 0), -- seconds
-  rest_time INTEGER NOT NULL DEFAULT 0 CHECK (rest_time >= 0), -- seconds
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  CONSTRAINT unique_workout_exercise_set UNIQUE(workout_exercise_id, set_number)
-);
-
-CREATE INDEX idx_exercise_sets_workout_exercise_id ON exercise_sets(workout_exercise_id);
-
--- =====================================================
--- TABLE: favorite_exercises_by_day
--- =====================================================
-
-CREATE TABLE favorite_exercises_by_day (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  day_of_week INTEGER NOT NULL CHECK (day_of_week >= 0 AND day_of_week <= 6),
-  exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
-  "order" INTEGER NOT NULL CHECK ("order" >= 1),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  CONSTRAINT unique_user_day_order UNIQUE(user_id, day_of_week, "order")
-);
-
-CREATE INDEX idx_favorite_exercises_user_day ON favorite_exercises_by_day(user_id, day_of_week);
-
--- =====================================================
--- SEED DATA: Predefined Exercises
--- =====================================================
-
-INSERT INTO exercises (name, category_id, is_custom, user_id) VALUES
-  -- Chest (category_id = 1)
-  ('Bench Press', 1, FALSE, NULL),
-  ('Incline Bench Press', 1, FALSE, NULL),
-  ('Decline Bench Press', 1, FALSE, NULL),
-  ('Dumbbell Press', 1, FALSE, NULL),
-  ('Push-ups', 1, FALSE, NULL),
-  ('Cable Flyes', 1, FALSE, NULL),
-  ('Dips', 1, FALSE, NULL),
-  
-  -- Back (category_id = 2)
-  ('Deadlift', 2, FALSE, NULL),
-  ('Pull-ups', 2, FALSE, NULL),
-  ('Barbell Row', 2, FALSE, NULL),
-  ('Lat Pulldown', 2, FALSE, NULL),
-  ('Seated Cable Row', 2, FALSE, NULL),
-  ('T-Bar Row', 2, FALSE, NULL),
-  ('Face Pulls', 2, FALSE, NULL),
-  
-  -- Legs (category_id = 3)
-  ('Squat', 3, FALSE, NULL),
-  ('Leg Press', 3, FALSE, NULL),
-  ('Romanian Deadlift', 3, FALSE, NULL),
-  ('Leg Curl', 3, FALSE, NULL),
-  ('Leg Extension', 3, FALSE, NULL),
-  ('Lunges', 3, FALSE, NULL),
-  ('Bulgarian Split Squat', 3, FALSE, NULL),
-  ('Calf Raises', 3, FALSE, NULL),
-  
-  -- Shoulders (category_id = 4)
-  ('Overhead Press', 4, FALSE, NULL),
-  ('Lateral Raises', 4, FALSE, NULL),
-  ('Front Raises', 4, FALSE, NULL),
-  ('Rear Delt Flyes', 4, FALSE, NULL),
-  ('Arnold Press', 4, FALSE, NULL),
-  ('Upright Row', 4, FALSE, NULL),
-  
-  -- Arms (category_id = 5)
-  ('Barbell Curl', 5, FALSE, NULL),
-  ('Dumbbell Curl', 5, FALSE, NULL),
-  ('Hammer Curl', 5, FALSE, NULL),
-  ('Tricep Pushdown', 5, FALSE, NULL),
-  ('Overhead Tricep Extension', 5, FALSE, NULL),
-  ('Close-Grip Bench Press', 5, FALSE, NULL),
-  ('Preacher Curl', 5, FALSE, NULL),
-  
-  -- Abs (category_id = 6)
-  ('Crunches', 6, FALSE, NULL),
-  ('Planks', 6, FALSE, NULL),
-  ('Russian Twists', 6, FALSE, NULL),
-  ('Leg Raises', 6, FALSE, NULL),
-  ('Cable Crunches', 6, FALSE, NULL),
-  ('Ab Wheel Rollout', 6, FALSE, NULL),
-  
-  -- Cardio (category_id = 7)
-  ('Running', 7, FALSE, NULL),
-  ('Cycling', 7, FALSE, NULL),
-  ('Rowing', 7, FALSE, NULL),
-  ('Jump Rope', 7, FALSE, NULL),
-  ('Stair Climber', 7, FALSE, NULL);
+-- Procedure to process return
+CREATE OR REPLACE PROCEDURE process_return(
+    order_uuid UUID,
+    book_uuid UUID
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    order_item RECORD;
+BEGIN
+    -- Get order item
+    SELECT * INTO order_item
+    FROM order_items
+    WHERE order_id = order_uuid AND book_id = book_uuid;
+    
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order item not found';
+    END IF;
+    
+    -- Restore stock
+    CALL update_book_stock(book_uuid, order_item.quantity);
+    
+    -- Update order status if all items returned
+    UPDATE orders
+    SET status = 'returned',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = order_uuid
+    AND NOT EXISTS (
+        SELECT 1 
+        FROM order_items oi
+        WHERE oi.order_id = order_uuid
+        AND oi.id != order_item.id
+    );
+END;
+$$;
 
 -- =====================================================
 -- TRIGGERS
 -- =====================================================
 
--- Trigger to auto-update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+-- Trigger to update stock when order item is created
+CREATE OR REPLACE FUNCTION update_stock_on_order()
 RETURNS TRIGGER AS $$
 BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
+    -- Stock is already updated in the checkout procedure
+    -- This trigger is for direct order item inserts (if needed)
+    UPDATE books
+    SET stock = stock - NEW.quantity,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = NEW.book_id;
+    
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trigger_users_updated_at
-  BEFORE UPDATE ON users
-  FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_stock_on_order
+    AFTER INSERT ON order_items
+    FOR EACH ROW
+    EXECUTE FUNCTION update_stock_on_order();
 
-CREATE TRIGGER trigger_workout_sessions_updated_at
-  BEFORE UPDATE ON workout_sessions
-  FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
-
--- =====================================================
--- RF-1: GESTIÓN DE PERFIL DEL USUARIO
--- =====================================================
-
--- Procedure: Register user with initial measurements (TRANSACTION)
-CREATE OR REPLACE PROCEDURE sp_register_user(
-  p_name VARCHAR,
-  p_email VARCHAR,
-  p_password VARCHAR,
-  p_age INTEGER,
-  p_initial_weight DECIMAL,
-  p_initial_height DECIMAL,
-  OUT p_user_id INTEGER
-) AS $$
+-- Trigger to update book rating when review is added/updated
+CREATE OR REPLACE FUNCTION update_book_rating()
+RETURNS TRIGGER AS $$
 BEGIN
-  -- Insert user
-  INSERT INTO users (name, email, password, age)
-  VALUES (p_name, p_email, p_password, p_age)
-  RETURNING id INTO p_user_id;
-  
-  -- Insert initial body measurement
-  INSERT INTO user_body_measurements (user_id, weight, height, measured_at)
-  VALUES (p_user_id, p_initial_weight, p_initial_height, NOW());
-  
-  RAISE NOTICE 'User registered with ID: %', p_user_id;
+    -- In a real application, you might want to store this in a books.rating column
+    -- For now, we'll just ensure the trigger fires
+    -- The rating is calculated on-the-fly using the function
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- =====================================================
--- RF-2: ACTUALIZACIÓN DEL PESO Y ALTURA
--- =====================================================
+CREATE TRIGGER update_book_rating
+    AFTER INSERT OR UPDATE ON reviews
+    FOR EACH ROW
+    EXECUTE FUNCTION update_book_rating();
 
--- Function: Get body measurement history for a user
-CREATE OR REPLACE FUNCTION fn_get_body_measurement_history(
-  p_user_id INTEGER,
-  p_limit INTEGER DEFAULT NULL
-) RETURNS TABLE (
-  measurement_id INTEGER,
-  weight DECIMAL,
-  height DECIMAL,
-  measured_at TIMESTAMP,
-  days_ago INTEGER
-) AS $$
+-- Trigger for order audit (updates updated_at)
+CREATE OR REPLACE FUNCTION audit_order_changes()
+RETURNS TRIGGER AS $$
 BEGIN
-  RETURN QUERY
-  SELECT 
-    ubm.id AS measurement_id,
-    ubm.weight,
-    ubm.height,
-    ubm.measured_at,
-    (CURRENT_DATE - ubm.measured_at::DATE)::INTEGER AS days_ago
-  FROM user_body_measurements ubm
-  WHERE ubm.user_id = p_user_id
-  ORDER BY ubm.measured_at DESC
-  LIMIT p_limit;
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- =====================================================
--- RF-3: SELECCIÓN DE DÍA PARA REGISTRAR EJERCICIOS
--- =====================================================
+CREATE TRIGGER audit_order_changes
+    BEFORE UPDATE ON orders
+    FOR EACH ROW
+    EXECUTE FUNCTION audit_order_changes();
 
--- Function: Get or verify if workout session exists for a date
-CREATE OR REPLACE FUNCTION fn_get_workout_session_by_date(
-  p_user_id INTEGER,
-  p_date DATE
-) RETURNS TABLE (
-  session_id INTEGER,
-  date DATE,
-  used_supplement BOOLEAN,
-  notes TEXT,
-  total_exercises BIGINT,
-  total_sets BIGINT
-) AS $$
+-- Trigger for user updated_at
+CREATE OR REPLACE FUNCTION update_user_timestamp()
+RETURNS TRIGGER AS $$
 BEGIN
-  RETURN QUERY
-  SELECT 
-    ws.id AS session_id,
-    ws.date,
-    ws.used_supplement,
-    ws.notes,
-    COUNT(DISTINCT we.id) AS total_exercises,
-    COUNT(es.id) AS total_sets
-  FROM workout_sessions ws
-  LEFT JOIN workout_exercises we ON ws.id = we.workout_session_id
-  LEFT JOIN exercise_sets es ON we.id = es.workout_exercise_id
-  WHERE ws.user_id = p_user_id AND ws.date = p_date
-  GROUP BY ws.id, ws.date, ws.used_supplement, ws.notes;
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Procedure: Get or create workout session for a date
-CREATE OR REPLACE PROCEDURE sp_get_or_create_workout_session(
-  p_user_id INTEGER,
-  p_date DATE,
-  p_used_supplement BOOLEAN DEFAULT FALSE,
-  OUT p_session_id INTEGER,
-  OUT p_is_new BOOLEAN
-) AS $$
+CREATE TRIGGER update_user_timestamp
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_user_timestamp();
+
+-- Trigger for book updated_at
+CREATE OR REPLACE FUNCTION update_book_timestamp()
+RETURNS TRIGGER AS $$
 BEGIN
-  -- Try to get existing session
-  SELECT id INTO p_session_id
-  FROM workout_sessions
-  WHERE user_id = p_user_id AND date = p_date;
-  
-  IF p_session_id IS NULL THEN
-    -- Create new session
-    INSERT INTO workout_sessions (user_id, date, used_supplement)
-    VALUES (p_user_id, p_date, p_used_supplement)
-    RETURNING id INTO p_session_id;
-    p_is_new := TRUE;
-  ELSE
-    p_is_new := FALSE;
-  END IF;
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- =====================================================
--- RF-4: BANCO DE EJERCICIOS
--- =====================================================
+CREATE TRIGGER update_book_timestamp
+    BEFORE UPDATE ON books
+    FOR EACH ROW
+    EXECUTE FUNCTION update_book_timestamp();
 
--- Function: Search exercises in the bank
-CREATE OR REPLACE FUNCTION fn_search_exercises(
-  p_search_term VARCHAR DEFAULT NULL,
-  p_category_id INTEGER DEFAULT NULL,
-  p_user_id INTEGER DEFAULT NULL,
-  p_include_custom BOOLEAN DEFAULT TRUE
-) RETURNS TABLE (
-  exercise_id INTEGER,
-  exercise_name VARCHAR,
-  category_id INTEGER,
-  category_name VARCHAR,
-  is_custom BOOLEAN,
-  is_own_custom BOOLEAN
-) AS $$
+-- Trigger for cart_item updated_at
+CREATE OR REPLACE FUNCTION update_cart_item_timestamp()
+RETURNS TRIGGER AS $$
 BEGIN
-  RETURN QUERY
-  SELECT 
-    e.id AS exercise_id,
-    e.name AS exercise_name,
-    e.category_id,
-    ec.name AS category_name,
-    e.is_custom,
-    (e.user_id = p_user_id) AS is_own_custom
-  FROM exercises e
-  JOIN exercise_categories ec ON e.category_id = ec.id
-  WHERE 
-    (p_search_term IS NULL OR e.name ILIKE '%' || p_search_term || '%')
-    AND (p_category_id IS NULL OR e.category_id = p_category_id)
-    AND (
-      e.is_custom = FALSE 
-      OR (p_include_custom AND e.user_id = p_user_id)
-    )
-  ORDER BY e.is_custom ASC, e.name ASC;
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- =====================================================
--- RF-5: REGISTRO DE SERIES Y REPETICIONES
--- =====================================================
-
--- Procedure: Add exercise to workout session
-CREATE OR REPLACE PROCEDURE sp_add_exercise_to_session(
-  p_workout_session_id INTEGER,
-  p_exercise_id INTEGER,
-  OUT p_workout_exercise_id INTEGER
-) AS $$
-DECLARE
-  v_next_order INTEGER;
-BEGIN
-  -- Get next order number
-  SELECT COALESCE(MAX("order"), 0) + 1 INTO v_next_order
-  FROM workout_exercises
-  WHERE workout_session_id = p_workout_session_id;
-  
-  -- Insert workout exercise
-  INSERT INTO workout_exercises (workout_session_id, exercise_id, "order")
-  VALUES (p_workout_session_id, p_exercise_id, v_next_order)
-  RETURNING id INTO p_workout_exercise_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- Procedure: Record exercise set with all details
-CREATE OR REPLACE PROCEDURE sp_record_exercise_set(
-  p_workout_exercise_id INTEGER,
-  p_reps INTEGER,
-  p_weight DECIMAL,
-  p_exercise_time INTEGER,
-  p_rest_time INTEGER DEFAULT 0,
-  OUT p_set_id INTEGER
-) AS $$
-DECLARE
-  v_next_set_number INTEGER;
-BEGIN
-  -- Get next set number
-  SELECT COALESCE(MAX(set_number), 0) + 1 INTO v_next_set_number
-  FROM exercise_sets
-  WHERE workout_exercise_id = p_workout_exercise_id;
-  
-  -- Insert set
-  INSERT INTO exercise_sets (
-    workout_exercise_id, 
-    set_number, 
-    reps, 
-    weight, 
-    exercise_time, 
-    rest_time
-  )
-  VALUES (
-    p_workout_exercise_id, 
-    v_next_set_number, 
-    p_reps, 
-    p_weight, 
-    p_exercise_time, 
-    p_rest_time
-  )
-  RETURNING id INTO p_set_id;
-END;
-$$ LANGUAGE plpgsql;
+CREATE TRIGGER update_cart_item_timestamp
+    BEFORE UPDATE ON cart_items
+    FOR EACH ROW
+    EXECUTE FUNCTION update_cart_item_timestamp();
 
 -- =====================================================
--- RF-6: VISUALIZACIÓN DEL HISTORIAL DE EJERCICIOS
+-- VIEWS (with subqueries in FROM)
 -- =====================================================
 
--- Function: Get workout history for a user
-CREATE OR REPLACE FUNCTION fn_get_workout_history(
-  p_user_id INTEGER,
-  p_start_date DATE DEFAULT NULL,
-  p_end_date DATE DEFAULT NULL,
-  p_limit INTEGER DEFAULT 30
-) RETURNS TABLE (
-  session_id INTEGER,
-  workout_date DATE,
-  used_supplement BOOLEAN,
-  total_exercises BIGINT,
-  total_sets BIGINT,
-  total_reps BIGINT,
-  total_volume DECIMAL,
-  total_time INTEGER
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    ws.id AS session_id,
-    ws.date AS workout_date,
-    ws.used_supplement,
-    COUNT(DISTINCT we.id) AS total_exercises,
-    COUNT(es.id) AS total_sets,
-    SUM(es.reps) AS total_reps,
-    ROUND(SUM(es.weight * es.reps), 2) AS total_volume,
-    SUM(es.exercise_time + es.rest_time) AS total_time
-  FROM workout_sessions ws
-  LEFT JOIN workout_exercises we ON ws.id = we.workout_session_id
-  LEFT JOIN exercise_sets es ON we.id = es.workout_exercise_id
-  WHERE 
-    ws.user_id = p_user_id
-    AND (p_start_date IS NULL OR ws.date >= p_start_date)
-    AND (p_end_date IS NULL OR ws.date <= p_end_date)
-  GROUP BY ws.id, ws.date, ws.used_supplement
-  ORDER BY ws.date DESC
-  LIMIT p_limit;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function: Get detailed workout session with all exercises and sets
-CREATE OR REPLACE FUNCTION fn_get_workout_session_details(
-  p_session_id INTEGER
-) RETURNS TABLE (
-  workout_exercise_id INTEGER,
-  exercise_order INTEGER,
-  exercise_id INTEGER,
-  exercise_name VARCHAR,
-  category_name VARCHAR,
-  set_number INTEGER,
-  reps INTEGER,
-  weight DECIMAL,
-  exercise_time INTEGER,
-  rest_time INTEGER
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    we.id AS workout_exercise_id,
-    we."order" AS exercise_order,
-    e.id AS exercise_id,
-    e.name AS exercise_name,
-    ec.name AS category_name,
-    es.set_number,
-    es.reps,
-    es.weight,
-    es.exercise_time,
-    es.rest_time
-  FROM workout_exercises we
-  JOIN exercises e ON we.exercise_id = e.id
-  JOIN exercise_categories ec ON e.category_id = ec.id
-  LEFT JOIN exercise_sets es ON we.id = es.workout_exercise_id
-  WHERE we.workout_session_id = p_session_id
-  ORDER BY we."order", es.set_number;
-END;
-$$ LANGUAGE plpgsql;
-
--- =====================================================
--- RF-7: HISTORIAL DE PROGRESO POR EJERCICIO
--- =====================================================
-
--- Function: Get exercise progress over time
-CREATE OR REPLACE FUNCTION fn_get_exercise_progress(
-  p_user_id INTEGER,
-  p_exercise_id INTEGER,
-  p_limit INTEGER DEFAULT 50
-) RETURNS TABLE (
-  workout_date DATE,
-  used_supplement BOOLEAN,
-  set_number INTEGER,
-  reps INTEGER,
-  weight DECIMAL,
-  volume DECIMAL,
-  exercise_time INTEGER,
-  max_weight_in_session DECIMAL,
-  avg_reps_in_session DECIMAL
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    ws.date AS workout_date,
-    ws.used_supplement,
-    es.set_number,
-    es.reps,
-    es.weight,
-    ROUND(es.weight * es.reps, 2) AS volume,
-    es.exercise_time,
-    MAX(es.weight) OVER (PARTITION BY ws.id) AS max_weight_in_session,
-    ROUND(AVG(es.reps) OVER (PARTITION BY ws.id), 2) AS avg_reps_in_session
-  FROM workout_sessions ws
-  JOIN workout_exercises we ON ws.id = we.workout_session_id
-  JOIN exercise_sets es ON we.id = es.workout_exercise_id
-  WHERE 
-    ws.user_id = p_user_id
-    AND we.exercise_id = p_exercise_id
-  ORDER BY ws.date DESC, es.set_number
-  LIMIT p_limit;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function: Compare performance with and without supplements (RF-7)
-CREATE OR REPLACE FUNCTION fn_compare_supplement_performance(
-  p_user_id INTEGER,
-  p_exercise_id INTEGER
-) RETURNS TABLE (
-  used_supplement BOOLEAN,
-  total_workouts BIGINT,
-  total_sets BIGINT,
-  avg_weight DECIMAL,
-  max_weight DECIMAL,
-  avg_reps DECIMAL,
-  max_reps INTEGER,
-  total_volume DECIMAL
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    ws.used_supplement,
-    COUNT(DISTINCT ws.id) AS total_workouts,
-    COUNT(es.id) AS total_sets,
-    ROUND(AVG(es.weight), 2) AS avg_weight,
-    MAX(es.weight) AS max_weight,
-    ROUND(AVG(es.reps), 2) AS avg_reps,
-    MAX(es.reps) AS max_reps,
-    ROUND(SUM(es.weight * es.reps), 2) AS total_volume
-  FROM workout_sessions ws
-  JOIN workout_exercises we ON ws.id = we.workout_session_id
-  JOIN exercise_sets es ON we.id = es.workout_exercise_id
-  WHERE 
-    ws.user_id = p_user_id
-    AND we.exercise_id = p_exercise_id
-  GROUP BY ws.used_supplement
-  ORDER BY ws.used_supplement DESC;
-END;
-$$ LANGUAGE plpgsql;
-
--- =====================================================
--- RF-8: EJERCICIOS FRECUENTES POR DÍA ("EN CALIENTE")
--- =====================================================
-
--- Function: Get favorite exercises for a specific day of week
-CREATE OR REPLACE FUNCTION fn_get_favorite_exercises_by_day(
-  p_user_id INTEGER,
-  p_day_of_week INTEGER
-) RETURNS TABLE (
-  favorite_id INTEGER,
-  exercise_id INTEGER,
-  exercise_name VARCHAR,
-  category_name VARCHAR,
-  display_order INTEGER
-) AS $$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    fed.id AS favorite_id,
-    e.id AS exercise_id,
-    e.name AS exercise_name,
-    ec.name AS category_name,
-    fed."order" AS display_order
-  FROM favorite_exercises_by_day fed
-  JOIN exercises e ON fed.exercise_id = e.id
-  JOIN exercise_categories ec ON e.category_id = ec.id
-  WHERE 
-    fed.user_id = p_user_id
-    AND fed.day_of_week = p_day_of_week
-  ORDER BY fed."order";
-END;
-$$ LANGUAGE plpgsql;
-
--- Procedure: Set favorite exercise for a day (replaces or adds)
-CREATE OR REPLACE PROCEDURE sp_set_favorite_exercise_for_day(
-  p_user_id INTEGER,
-  p_day_of_week INTEGER,
-  p_exercise_id INTEGER,
-  p_order INTEGER,
-  OUT p_favorite_id INTEGER
-) AS $$
-BEGIN
-  -- Delete if exists at same order
-  DELETE FROM favorite_exercises_by_day
-  WHERE user_id = p_user_id 
-    AND day_of_week = p_day_of_week 
-    AND "order" = p_order;
-  
-  -- Insert new favorite
-  INSERT INTO favorite_exercises_by_day (user_id, day_of_week, exercise_id, "order")
-  VALUES (p_user_id, p_day_of_week, p_exercise_id, p_order)
-  RETURNING id INTO p_favorite_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- =====================================================
--- VIEWS (Para consultas frecuentes)
--- =====================================================
-
--- View: Workout summary by user (RF-6)
-CREATE OR REPLACE VIEW v_user_workout_summary AS
+-- View for book catalog with ratings and sales
+CREATE OR REPLACE VIEW book_catalog AS
 SELECT 
-  u.id AS user_id,
-  u.name AS user_name,
-  COUNT(DISTINCT ws.id) AS total_workouts,
-  COUNT(DISTINCT we.exercise_id) AS unique_exercises_performed,
-  MAX(ws.date) AS last_workout_date,
-  SUM(es.reps) AS lifetime_total_reps,
-  ROUND(SUM(es.weight * es.reps), 2) AS lifetime_total_volume
+    b.id,
+    b.isbn,
+    b.title,
+    b.description,
+    b.price,
+    b.stock,
+    b.pages,
+    b.publication_date,
+    b.language,
+    b.cover_image_url,
+    p.name as publisher_name,
+    c.name as category_name,
+    COALESCE(book_stats.average_rating, 0)::NUMERIC(3, 2) as average_rating,
+    COALESCE(book_stats.total_reviews, 0) as total_reviews,
+    COALESCE(sales_stats.total_sold, 0) as total_sold
+FROM books b
+LEFT JOIN publishers p ON b.publisher_id = p.id
+LEFT JOIN categories c ON b.category_id = c.id
+LEFT JOIN (
+    -- Subquery in FROM for book statistics
+    SELECT 
+        r.book_id,
+        AVG(r.rating)::NUMERIC(3, 2) as average_rating,
+        COUNT(*) as total_reviews
+    FROM reviews r
+    GROUP BY r.book_id
+) book_stats ON b.id = book_stats.book_id
+LEFT JOIN (
+    -- Another subquery in FROM for sales statistics
+    SELECT 
+        oi.book_id,
+        SUM(oi.quantity) as total_sold
+    FROM order_items oi
+    INNER JOIN orders o ON oi.order_id = o.id
+    WHERE o.status IN ('shipped', 'delivered')
+    GROUP BY oi.book_id
+) sales_stats ON b.id = sales_stats.book_id
+WHERE b.is_active = TRUE;
+
+-- View for order summary with customer info
+CREATE OR REPLACE VIEW order_summary AS
+SELECT 
+    o.id as order_id,
+    o.status,
+    o.total_amount,
+    o.shipping_cost,
+    o.discount_amount,
+    o.created_at,
+    o.shipped_at,
+    o.delivered_at,
+    u.id as user_id,
+    u.email,
+    u.first_name || ' ' || u.last_name as customer_name,
+    a.street || ', ' || a.city || ', ' || a.country as shipping_address,
+    order_stats.total_items,
+    order_stats.total_books
+FROM orders o
+INNER JOIN users u ON o.user_id = u.id
+INNER JOIN addresses a ON o.address_id = a.id
+INNER JOIN (
+    -- Subquery in FROM for order statistics
+    SELECT 
+        order_id,
+        SUM(quantity) as total_items,
+        COUNT(DISTINCT book_id) as total_books
+    FROM order_items
+    GROUP BY order_id
+) order_stats ON o.id = order_stats.order_id;
+
+-- View for customer purchase history
+CREATE OR REPLACE VIEW customer_purchase_history AS
+SELECT 
+    u.id as user_id,
+    u.email,
+    u.first_name || ' ' || u.last_name as customer_name,
+    customer_stats.total_orders,
+    customer_stats.total_spent,
+    customer_stats.average_order_value,
+    customer_stats.favorite_category
 FROM users u
-LEFT JOIN workout_sessions ws ON u.id = ws.user_id
-LEFT JOIN workout_exercises we ON ws.id = we.workout_session_id
-LEFT JOIN exercise_sets es ON we.id = es.workout_exercise_id
-GROUP BY u.id, u.name;
-
--- View: Exercise usage statistics (RF-4, RF-6)
-CREATE OR REPLACE VIEW v_exercise_usage_stats AS
-SELECT 
-  e.id AS exercise_id,
-  e.name AS exercise_name,
-  ec.name AS category_name,
-  e.is_custom,
-  COUNT(DISTINCT we.workout_session_id) AS times_used,
-  COUNT(DISTINCT we.id) AS total_workout_exercises,
-  COUNT(es.id) AS total_sets_performed
-FROM exercises e
-JOIN exercise_categories ec ON e.category_id = ec.id
-LEFT JOIN workout_exercises we ON e.id = we.exercise_id
-LEFT JOIN exercise_sets es ON we.id = es.workout_exercise_id
-GROUP BY e.id, e.name, ec.name, e.is_custom;
+INNER JOIN (
+    -- Subquery in FROM for customer statistics
+    SELECT 
+        o.user_id,
+        COUNT(DISTINCT o.id) as total_orders,
+        SUM(o.total_amount) as total_spent,
+        AVG(o.total_amount) as average_order_value,
+        (
+            SELECT c.name
+            FROM order_items oi2
+            INNER JOIN books b2 ON oi2.book_id = b2.id
+            INNER JOIN categories c ON b2.category_id = c.id
+            INNER JOIN orders o2 ON oi2.order_id = o2.id
+            WHERE o2.user_id = o.user_id
+            GROUP BY c.name
+            ORDER BY SUM(oi2.quantity) DESC
+            LIMIT 1
+        ) as favorite_category
+    FROM orders o
+    WHERE o.status IN ('shipped', 'delivered')
+    GROUP BY o.user_id
+) customer_stats ON u.id = customer_stats.user_id
+WHERE u.role = 'customer';
 
 -- =====================================================
--- SUCCESS MESSAGE
+-- INITIAL DATA (Optional - for testing)
 -- =====================================================
 
-DO $$
-BEGIN
-  RAISE NOTICE '';
-  RAISE NOTICE '✅ ===============================================';
-  RAISE NOTICE '✅ Database schema created successfully!';
-  RAISE NOTICE '✅ ===============================================';
-  RAISE NOTICE '';
-  RAISE NOTICE '📊 Tables created: 8';
-  RAISE NOTICE '   - exercise_categories (catalog)';
-  RAISE NOTICE '   - users';
-  RAISE NOTICE '   - user_body_measurements';
-  RAISE NOTICE '   - exercises';
-  RAISE NOTICE '   - workout_sessions';
-  RAISE NOTICE '   - workout_exercises';
-  RAISE NOTICE '   - exercise_sets';
-  RAISE NOTICE '   - favorite_exercises_by_day';
-  RAISE NOTICE '';
-  RAISE NOTICE '🏷️  Exercise categories: %', (SELECT COUNT(*) FROM exercise_categories);
-  RAISE NOTICE '🏋️  Predefined exercises: %', (SELECT COUNT(*) FROM exercises WHERE is_custom = FALSE);
-  RAISE NOTICE '';
-  RAISE NOTICE '⚙️  Triggers: 2 (auto-update timestamps)';
-  RAISE NOTICE '💾 Stored Procedures: 5';
-  RAISE NOTICE '   - sp_register_user (RF-1)';
-  RAISE NOTICE '   - sp_get_or_create_workout_session (RF-3)';
-  RAISE NOTICE '   - sp_add_exercise_to_session (RF-5)';
-  RAISE NOTICE '   - sp_record_exercise_set (RF-5)';
-  RAISE NOTICE '   - sp_set_favorite_exercise_for_day (RF-8)';
-  RAISE NOTICE '';
-  RAISE NOTICE '📐 Functions: 8';
-  RAISE NOTICE '   - fn_get_body_measurement_history (RF-2)';
-  RAISE NOTICE '   - fn_get_workout_session_by_date (RF-3)';
-  RAISE NOTICE '   - fn_search_exercises (RF-4)';
-  RAISE NOTICE '   - fn_get_workout_history (RF-6)';
-  RAISE NOTICE '   - fn_get_workout_session_details (RF-6)';
-  RAISE NOTICE '   - fn_get_exercise_progress (RF-7)';
-  RAISE NOTICE '   - fn_compare_supplement_performance (RF-7)';
-  RAISE NOTICE '   - fn_get_favorite_exercises_by_day (RF-8)';
-  RAISE NOTICE '';
-  RAISE NOTICE '👁️  Views: 2';
-  RAISE NOTICE '   - v_user_workout_summary';
-  RAISE NOTICE '   - v_exercise_usage_stats';
-  RAISE NOTICE '';
-  RAISE NOTICE '🎯 All requirements implemented!';
-END $$;
+-- Insert default admin user (password should be hashed in real application)
+-- Password: admin123 (should be properly hashed)
+INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES
+('admin@libreria.com', '$2b$10$example_hash_here', 'Admin', 'User', 'admin');
 
+-- Insert sample categories
+INSERT INTO categories (name, description) VALUES
+('Ficción', 'Novelas y obras de ficción'),
+('No Ficción', 'Libros informativos y educativos'),
+('Ciencia', 'Libros de ciencia y tecnología'),
+('Historia', 'Libros históricos'),
+('Biografía', 'Biografías y autobiografías');
+
+-- Insert sample publishers
+INSERT INTO publishers (name, city, country) VALUES
+('Editorial Planeta', 'Barcelona', 'España'),
+('Penguin Random House', 'Madrid', 'España'),
+('Editorial Anagrama', 'Barcelona', 'España');
+
+-- =====================================================
+-- END OF SCHEMA
+-- =====================================================
